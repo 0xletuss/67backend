@@ -12,16 +12,35 @@ jwt = JWTManager()
 def create_app():
     app = Flask(__name__)
     
-    # Configuration
-    app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///food_ordering.db')
+    # ===== RAILWAY MYSQL CONFIGURATION =====
+    # Get Railway MySQL credentials from environment variables
+    MYSQL_USER = os.environ.get('MYSQL_USER', 'root')
+    MYSQL_PASSWORD = os.environ.get('MYSQL_PASSWORD', 'yJwppGqIxpQSENzvzCbvlhZFxMqmavkD')
+    MYSQL_HOST = os.environ.get('MYSQL_HOST', 'switchyard.proxy.rlwy.net')
+    MYSQL_PORT = os.environ.get('MYSQL_PORT', '37137')
+    MYSQL_DATABASE = os.environ.get('MYSQL_DATABASE', 'railway')
+    
+    # Build MySQL connection string
+    DATABASE_URL = f'mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}'
+    
+    # Database Configuration
+    app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-    app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'your-secret-key-change-in-production')
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        'pool_recycle': 280,  # Recycle connections after 280 seconds
+        'pool_pre_ping': True,  # Verify connections before using them
+        'pool_size': 10,
+        'max_overflow': 20
+    }
+    
+    # JWT Configuration
+    app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'your-secret-key-change-in-production-2024')
     app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=24)
     
     # Initialize extensions with app
     db.init_app(app)
     jwt.init_app(app)
-    CORS(app)
+    CORS(app, resources={r"/api/*": {"origins": "*"}})
     
     # Register blueprints
     from routes.auth_routes import auth_bp
@@ -38,13 +57,39 @@ def create_app():
     app.register_blueprint(product_bp, url_prefix='/api/products')
     app.register_blueprint(order_bp, url_prefix='/api/orders')
     
-    # Create tables
+    # Create tables (keep this enabled for first deployment)
     with app.app_context():
-        db.create_all()
+        try:
+            db.create_all()
+            print("✅ Database tables created successfully")
+        except Exception as e:
+            print(f"❌ Error creating tables: {str(e)}")
     
     @app.route('/')
     def index():
-        return {'message': 'Food Ordering Management System API', 'status': 'running'}
+        return {
+            'message': '67 Street Food Ordering Management System API', 
+            'status': 'running',
+            'database': 'Railway MySQL'
+        }
+    
+    @app.route('/api/health')
+    def health_check():
+        """Health check endpoint to verify database connection"""
+        try:
+            # Test database connection
+            db.session.execute('SELECT 1')
+            return {
+                'status': 'healthy', 
+                'database': 'connected',
+                'host': MYSQL_HOST
+            }, 200
+        except Exception as e:
+            return {
+                'status': 'unhealthy', 
+                'database': 'disconnected',
+                'error': str(e)
+            }, 500
     
     return app
 
@@ -52,6 +97,5 @@ def create_app():
 app = create_app()
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 10000))
-    app.run(host='0.0.0.0', port=port)
-
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)  # Set debug=False for production
