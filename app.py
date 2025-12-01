@@ -78,7 +78,8 @@ def create_app():
         """Health check endpoint to verify database connection"""
         try:
             # Test database connection
-            db.session.execute('SELECT 1')
+            from sqlalchemy import text
+            db.session.execute(text('SELECT 1'))
             return {
                 'status': 'healthy', 
                 'database': 'connected',
