@@ -2,7 +2,9 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app import db
 from models.user import Seller
+# routes/seller_routes.py
 from models.product import Product, Inventory
+
 from models.order import Order, OrderItem
 from sqlalchemy import func
 from datetime import datetime, timedelta
