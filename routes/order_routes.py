@@ -16,19 +16,47 @@ order_bp = Blueprint('order', __name__)
 def create_order():
     """Create a new order (customer only)"""
     try:
-        current_user = get_jwt_identity()
+        # FIXED: Handle JWT identity correctly
+        current_user_identity = get_jwt_identity()
+        
+        print("=" * 50)
+        print("JWT IDENTITY DEBUG")
+        print("Raw identity:", current_user_identity)
+        print("Identity type:", type(current_user_identity))
+        print("=" * 50)
+        
+        # Parse JWT identity if it's a string (JSON string)
+        if isinstance(current_user_identity, str):
+            import json
+            try:
+                current_user = json.loads(current_user_identity)
+                print("Parsed JWT from string to dict")
+            except json.JSONDecodeError:
+                # If it's just a user ID string
+                print("JWT is a simple string ID, fetching user from database")
+                from models.user import Customer
+                customer = Customer.query.get(int(current_user_identity))
+                if not customer:
+                    return jsonify({'error': 'User not found'}), 404
+                current_user = {
+                    'id': customer.customerId,
+                    'type': 'customer'
+                }
+        else:
+            current_user = current_user_identity
+        
+        print("Final current_user:", current_user)
+        print("=" * 50)
         
         if current_user['type'] != 'customer':
             return jsonify({'error': 'Only customers can create orders'}), 403
         
-        # FIXED: Properly get JSON data
+        # Get JSON data
         data = request.get_json(force=True)
         
         # Debug logging
-        print("=" * 50)
         print("RECEIVED ORDER REQUEST")
-        print("=" * 50)
-        print("Raw data:", data)
+        print("Order data:", data)
         print("Data type:", type(data))
         print("=" * 50)
         
