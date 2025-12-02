@@ -549,7 +549,6 @@ def cancel_reservation(reservation_id):
 
 # ==================== SELLER RESERVATION ROUTES ====================
 # Add these routes to your order_bp in order.py
-
 @order_bp.route('/reservations/all', methods=['GET'])
 @jwt_required()
 def get_all_reservations():
@@ -557,14 +556,10 @@ def get_all_reservations():
     try:
         current_user = parse_jwt_identity()
         
-        # Only sellers can view all reservations
         if current_user['type'] != 'seller':
             return jsonify({'error': 'Only sellers can view all reservations'}), 403
         
-        # Get status filter if provided
         status = request.args.get('status')
-        
-        # Query all reservations (sellers see all customer reservations)
         query = Reservation.query
         
         if status:
@@ -572,21 +567,31 @@ def get_all_reservations():
         
         reservations = query.order_by(Reservation.reservationDate.desc()).all()
         
-        # Enrich with customer information
         result = []
         for reservation in reservations:
             res_dict = reservation.to_dict()
             
-            # Add customer name if available
-            if reservation.customer:
-                res_dict['customerName'] = reservation.customer.name
-                res_dict['customer_name'] = reservation.customer.name
-                if hasattr(reservation.customer, 'email'):
-                    res_dict['customerEmail'] = reservation.customer.email
-                    res_dict['customer_email'] = reservation.customer.email
-                if hasattr(reservation.customer, 'phone'):
-                    res_dict['customerPhone'] = reservation.customer.phone
-                    res_dict['customer_phone'] = reservation.customer.phone
+            # === SAFE CUSTOMER INFO (NO MORE 500 ERROR) ===
+            if hasattr(reservation, 'customer') and reservation.customer:
+                customer = reservation.customer
+                full_name = ""
+                if hasattr(customer, 'firstName') and customer.firstName:
+                    full_name += customer.firstName
+                if hasattr(customer, 'lastName') and customer.lastName:
+                    full_name += " " + customer.lastName.strip()
+                
+                res_dict['customerName'] = full_name.strip() or "Unknown Customer"
+                res_dict['customer_name'] = full_name.strip() or "Unknown Customer"
+                
+                if hasattr(customer, 'email') and customer.email:
+                    res_dict['customerEmail'] = customer.email
+                    res_dict['customer_email'] = customer.email
+                if hasattr(customer, 'phone') and customer.phone:
+                    res_dict['customerPhone'] = customer.phone
+                    res_dict['customer_phone'] = customer.phone
+            else:
+                res_dict['customerName'] = "Customer Not Found"
+                res_dict['customerEmail'] = "N/A"
             
             result.append(res_dict)
         
@@ -595,13 +600,11 @@ def get_all_reservations():
             'count': len(result)
         }), 200
         
-    except ValueError:
-        return jsonify({'error': 'Invalid token format. Please login again.'}), 401
     except Exception as e:
         print(f"Error fetching reservations: {str(e)}")
         import traceback
         traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': 'Internal server error', 'details': str(e)}), 500
 
 
 @order_bp.route('/reservations/<int:reservation_id>', methods=['GET'])
@@ -612,30 +615,35 @@ def get_reservation_details(reservation_id):
         current_user = parse_jwt_identity()
         
         reservation = Reservation.query.get(reservation_id)
-        
         if not reservation:
             return jsonify({'error': 'Reservation not found'}), 404
         
-        # Check permissions
+        # Permission check
         if current_user['type'] == 'customer' and reservation.customerId != current_user['id']:
             return jsonify({'error': 'You can only view your own reservations'}), 403
-        
-        if current_user['type'] != 'customer' and current_user['type'] != 'seller':
+        if current_user['type'] not in ['customer', 'seller']:
             return jsonify({'error': 'Unauthorized'}), 403
         
-        # Get reservation details
         res_dict = reservation.to_dict()
         
-        # Add customer information for sellers
-        if current_user['type'] == 'seller' and reservation.customer:
-            res_dict['customerName'] = reservation.customer.name
-            res_dict['customer_name'] = reservation.customer.name
-            if hasattr(reservation.customer, 'email'):
-                res_dict['customerEmail'] = reservation.customer.email
-                res_dict['customer_email'] = reservation.customer.email
-            if hasattr(reservation.customer, 'phone'):
-                res_dict['customerPhone'] = reservation.customer.phone
-                res_dict['customer_phone'] = reservation.customer.phone
+        # === ADD CUSTOMER INFO ONLY FOR SELLERS (SAFE) ===
+        if current_user['type'] == 'seller' and hasattr(reservation, 'customer') and reservation.customer:
+            customer = reservation.customer
+            full_name = ""
+            if hasattr(customer, 'firstName') and customer.firstName:
+                full_name += customer.firstName
+            if hasattr(customer, 'lastName') and customer.lastName:
+                full_name += " " + customer.lastName.strip()
+            
+            res_dict['customerName'] = full_name.strip() or "Unknown Customer"
+            res_dict['customer_name'] = full_name.strip() or "Unknown Customer"
+            
+            if hasattr(customer, 'email') and customer.email:
+                res_dict['customerEmail'] = customer.email
+                res_dict['customer_email'] = customer.email
+            if hasattr(customer, 'phone') and customer.phone:
+                res_dict['customerPhone'] = customer.phone
+                res_dict['customer_phone'] = customer.phone
         
         return jsonify(res_dict), 200
         
@@ -651,24 +659,18 @@ def update_reservation_status(reservation_id):
     """Update reservation status (seller only)"""
     try:
         current_user = parse_jwt_identity()
-        
-        # Only sellers can update reservation status
         if current_user['type'] != 'seller':
             return jsonify({'error': 'Only sellers can update reservation status'}), 403
         
         reservation = Reservation.query.get(reservation_id)
-        
         if not reservation:
             return jsonify({'error': 'Reservation not found'}), 404
         
         data = request.get_json()
-        
         if 'status' not in data:
             return jsonify({'error': 'Status is required'}), 400
         
         new_status = data['status']
-        
-        # Validate status
         valid_statuses = ['Pending', 'Confirmed', 'Completed', 'Cancelled', 'No-show']
         if new_status not in valid_statuses:
             return jsonify({'error': f'Invalid status. Must be one of: {", ".join(valid_statuses)}'}), 400
