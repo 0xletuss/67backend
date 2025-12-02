@@ -43,7 +43,7 @@ class Customer(db.Model):
     isActive = db.Column(db.Boolean, default=True)
     
     # Relationships
-    orders = db.relationship('Order', backref='customer', lazy=True)
+    orders = db.relationship('Order', backref='customer', lazy=True, foreign_keys='Order.customerId')
     reservations = db.relationship('Reservation', backref='customer', lazy=True)
     
     def set_password(self, password):
@@ -80,6 +80,7 @@ class Seller(db.Model):
     
     # Relationships
     products = db.relationship('Product', backref='seller', lazy=True, cascade='all, delete-orphan')
+    orders = db.relationship('Order', backref='seller', lazy=True, foreign_keys='Order.sellerId')
     
     def set_password(self, password):
         self.password = generate_password_hash(password)

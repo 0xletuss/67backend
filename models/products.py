@@ -12,6 +12,7 @@ class Product(db.Model):
     isAvailable = db.Column(db.Boolean, default=True)
     category = db.Column(db.String(50))
     imageUrl = db.Column(db.String(255))
+    preparation_time = db.Column(db.Integer)
     createdAt = db.Column(db.DateTime, default=datetime.utcnow)
     updatedAt = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -20,20 +21,38 @@ class Product(db.Model):
     order_items = db.relationship('OrderItem', backref='product', lazy=True)
     
     def to_dict(self):
-        return {
-            'productId': self.productId,
-            'sellerId': self.sellerId,
-            'productName': self.productName,
-            'description': self.description,
-            'unitPrice': float(self.unitPrice) if self.unitPrice else 0,
-            'isAvailable': self.isAvailable,
-            'category': self.category,
-            'imageUrl': self.imageUrl,
-            'createdAt': self.createdAt.isoformat() if self.createdAt else None,
-            'updatedAt': self.updatedAt.isoformat() if self.updatedAt else None,
-            'inventory': self.inventory.to_dict() if self.inventory else None,
-            'sellerName': self.seller.storeName if self.seller else None
-        }
+        try:
+            return {
+                'productId': self.productId,
+                'sellerId': self.sellerId,
+                'productName': self.productName,
+                'description': self.description,
+                'unitPrice': float(self.unitPrice) if self.unitPrice else 0,
+                'isAvailable': self.isAvailable,
+                'category': self.category,
+                'imageUrl': self.imageUrl,
+                'preparationTime': self.preparation_time,
+                'createdAt': self.createdAt.isoformat() if self.createdAt else None,
+                'updatedAt': self.updatedAt.isoformat() if self.updatedAt else None,
+                'inventory': self.inventory.to_dict() if self.inventory else None,
+                'sellerName': self.seller.storeName if hasattr(self, 'seller') and self.seller else None,
+                'stock': self.inventory.quantityInStock if self.inventory else 0,
+                'needsReorder': (self.inventory.quantityInStock <= self.inventory.reorderLevel) if self.inventory else False
+            }
+        except Exception as e:
+            print(f"Error in Product.to_dict(): {e}")
+            return {
+                'productId': self.productId,
+                'sellerId': self.sellerId,
+                'productName': self.productName,
+                'description': self.description,
+                'unitPrice': float(self.unitPrice) if self.unitPrice else 0,
+                'isAvailable': self.isAvailable,
+                'category': self.category,
+                'imageUrl': self.imageUrl,
+                'preparationTime': self.preparation_time,
+                'stock': 0
+            }
 
 
 class Inventory(db.Model):
@@ -54,7 +73,8 @@ class Inventory(db.Model):
             'reorderLevel': self.reorderLevel,
             'lastRestocked': self.lastRestocked.isoformat() if self.lastRestocked else None,
             'updatedAt': self.updatedAt.isoformat() if self.updatedAt else None,
-            'needsReorder': self.quantityInStock <= self.reorderLevel
+            'needsReorder': self.quantityInStock <= self.reorderLevel,
+            'status': 'Low Stock' if self.quantityInStock <= self.reorderLevel else 'In Stock' if self.quantityInStock > 0 else 'Out of Stock'
         }
     
     def update_stock(self, quantity_change):
@@ -67,3 +87,17 @@ class Inventory(db.Model):
     def check_availability(self, quantity):
         """Check if requested quantity is available"""
         return self.quantityInStock >= quantity
+    
+    def reduce_stock(self, quantity):
+        """Reduce stock by quantity (for orders)"""
+        if self.check_availability(quantity):
+            self.quantityInStock -= quantity
+            self.updatedAt = datetime.utcnow()
+            return True
+        return False
+    
+    def add_stock(self, quantity):
+        """Add stock (for restocking)"""
+        self.quantityInStock += quantity
+        self.lastRestocked = datetime.utcnow()
+        self.updatedAt = datetime.utcnow()

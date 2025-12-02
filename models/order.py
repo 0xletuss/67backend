@@ -6,8 +6,9 @@ class Order(db.Model):
     
     orderId = db.Column(db.Integer, primary_key=True)
     customerId = db.Column(db.Integer, db.ForeignKey('customer.customerId'), nullable=False)
+    sellerId = db.Column(db.Integer, db.ForeignKey('seller.sellerId'), nullable=False)
     orderDate = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    status = db.Column(db.Enum('Pending', 'Confirmed', 'Delivered', 'Cancelled', name='order_status'), 
+    status = db.Column(db.Enum('Pending', 'Confirmed', 'Preparing', 'Ready', 'Delivered', 'Completed', 'Cancelled', name='order_status'), 
                        default='Pending', nullable=False)
     type = db.Column(db.Enum('Delivery', 'Pickup', name='order_type'), default='Delivery', nullable=False)
     totalAmount = db.Column(db.Numeric(10, 2), nullable=False)
@@ -22,22 +23,38 @@ class Order(db.Model):
     delivery = db.relationship('Delivery', backref='order', uselist=False, cascade='all, delete-orphan')
     
     def to_dict(self):
-        return {
-            'orderId': self.orderId,
-            'customerId': self.customerId,
-            'customerName': self.customer.customerName if self.customer else None,
-            'orderDate': self.orderDate.isoformat() if self.orderDate else None,
-            'status': self.status,
-            'type': self.type,
-            'totalAmount': float(self.totalAmount) if self.totalAmount else 0,
-            'deliveryAddress': self.deliveryAddress,
-            'notes': self.notes,
-            'createdAt': self.createdAt.isoformat() if self.createdAt else None,
-            'updatedAt': self.updatedAt.isoformat() if self.updatedAt else None,
-            'items': [item.to_dict() for item in self.order_items],
-            'payment': self.payment.to_dict() if self.payment else None,
-            'delivery': self.delivery.to_dict() if self.delivery else None
-        }
+        try:
+            return {
+                'orderId': self.orderId,
+                'customerId': self.customerId,
+                'sellerId': self.sellerId,
+                'customerName': self.customer.customerName if hasattr(self, 'customer') and self.customer else None,
+                'sellerName': self.seller.storeName if hasattr(self, 'seller') and self.seller else None,
+                'orderDate': self.orderDate.isoformat() if self.orderDate else None,
+                'status': self.status,
+                'type': self.type,
+                'totalAmount': float(self.totalAmount) if self.totalAmount else 0,
+                'deliveryAddress': self.deliveryAddress,
+                'notes': self.notes,
+                'createdAt': self.createdAt.isoformat() if self.createdAt else None,
+                'updatedAt': self.updatedAt.isoformat() if self.updatedAt else None,
+                'items': [item.to_dict() for item in self.order_items] if self.order_items else [],
+                'payment': self.payment.to_dict() if self.payment else None,
+                'delivery': self.delivery.to_dict() if self.delivery else None
+            }
+        except Exception as e:
+            print(f"Error in Order.to_dict(): {e}")
+            return {
+                'orderId': self.orderId,
+                'customerId': self.customerId,
+                'sellerId': self.sellerId,
+                'orderDate': self.orderDate.isoformat() if self.orderDate else None,
+                'status': self.status,
+                'type': self.type,
+                'totalAmount': float(self.totalAmount) if self.totalAmount else 0,
+                'deliveryAddress': self.deliveryAddress,
+                'items': []
+            }
     
     def calculate_total(self):
         """Calculate total amount from order items"""
@@ -56,15 +73,25 @@ class OrderItem(db.Model):
     subtotal = db.Column(db.Numeric(10, 2), nullable=False)
     
     def to_dict(self):
-        return {
-            'orderItemId': self.orderItemId,
-            'orderId': self.orderId,
-            'productId': self.productId,
-            'productName': self.product.productName if self.product else None,
-            'quantity': self.quantity,
-            'subtotal': float(self.subtotal) if self.subtotal else 0,
-            'unitPrice': float(self.product.unitPrice) if self.product else 0
-        }
+        try:
+            return {
+                'orderItemId': self.orderItemId,
+                'orderId': self.orderId,
+                'productId': self.productId,
+                'productName': self.product.productName if hasattr(self, 'product') and self.product else None,
+                'quantity': self.quantity,
+                'subtotal': float(self.subtotal) if self.subtotal else 0,
+                'unitPrice': float(self.product.unitPrice) if hasattr(self, 'product') and self.product else 0
+            }
+        except Exception as e:
+            print(f"Error in OrderItem.to_dict(): {e}")
+            return {
+                'orderItemId': self.orderItemId,
+                'orderId': self.orderId,
+                'productId': self.productId,
+                'quantity': self.quantity,
+                'subtotal': float(self.subtotal) if self.subtotal else 0
+            }
 
 
 class Delivery(db.Model):
@@ -72,7 +99,7 @@ class Delivery(db.Model):
     
     deliveryId = db.Column(db.Integer, primary_key=True)
     orderId = db.Column(db.Integer, db.ForeignKey('orders.orderId'), unique=True, nullable=False)
-    deliveryAddress = db.Column(db.String(50), nullable=False)
+    deliveryAddress = db.Column(db.String(255), nullable=False)
     estimatedTime = db.Column(db.DateTime)
     actualDeliveryTime = db.Column(db.DateTime)
     courseStatus = db.Column(db.Enum('Scheduled', 'In Transit', 'Out for Delivery', 'Delivered', name='delivery_status'),
@@ -114,7 +141,7 @@ class Reservation(db.Model):
         return {
             'reservationId': self.reservationId,
             'customerId': self.customerId,
-            'customerName': self.customer.customerName if self.customer else None,
+            'customerName': self.customer.customerName if hasattr(self, 'customer') and self.customer else None,
             'reservationDate': self.reservationDate.isoformat() if self.reservationDate else None,
             'numberOfPeople': self.numberOfPeople,
             'status': self.status,
