@@ -1,7 +1,6 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
 from app import db
-# routes/auth_routes.py
 from models.user import Admin, Customer, Seller
 
 
@@ -37,9 +36,10 @@ def customer_register():
         db.session.add(customer)
         db.session.commit()
         
-        # Create access token
+        # FIXED: Create access token with string identity
         access_token = create_access_token(
-            identity={'id': customer.customerId, 'type': 'customer'}
+            identity=f"customer:{customer.customerId}",
+            additional_claims={'type': 'customer', 'user_id': customer.customerId}
         )
         
         return jsonify({
@@ -71,8 +71,10 @@ def customer_login():
         if not customer.isActive:
             return jsonify({'error': 'Account is deactivated'}), 403
         
+        # FIXED: Create access token with string identity
         access_token = create_access_token(
-            identity={'id': customer.customerId, 'type': 'customer'}
+            identity=f"customer:{customer.customerId}",
+            additional_claims={'type': 'customer', 'user_id': customer.customerId}
         )
         
         return jsonify({
@@ -119,9 +121,10 @@ def seller_register():
         db.session.add(seller)
         db.session.commit()
         
-        # Create access token
+        # FIXED: Create access token with string identity
         access_token = create_access_token(
-            identity={'id': seller.sellerId, 'type': 'seller'}
+            identity=f"seller:{seller.sellerId}",
+            additional_claims={'type': 'seller', 'user_id': seller.sellerId}
         )
         
         return jsonify({
@@ -156,8 +159,10 @@ def seller_login():
         if not seller.isVerified:
             return jsonify({'error': 'Account pending admin verification'}), 403
         
+        # FIXED: Create access token with string identity
         access_token = create_access_token(
-            identity={'id': seller.sellerId, 'type': 'seller'}
+            identity=f"seller:{seller.sellerId}",
+            additional_claims={'type': 'seller', 'user_id': seller.sellerId}
         )
         
         return jsonify({
@@ -187,8 +192,10 @@ def admin_login():
         if not admin or not admin.check_password(data['password']):
             return jsonify({'error': 'Invalid username or password'}), 401
         
+        # FIXED: Create access token with string identity
         access_token = create_access_token(
-            identity={'id': admin.adminId, 'type': 'admin'}
+            identity=f"admin:{admin.adminId}",
+            additional_claims={'type': 'admin', 'user_id': admin.adminId}
         )
         
         return jsonify({
@@ -208,9 +215,10 @@ def admin_login():
 def get_profile():
     """Get current user profile"""
     try:
-        current_user = get_jwt_identity()
-        user_type = current_user['type']
-        user_id = current_user['id']
+        # FIXED: Parse the identity string to get user type and ID
+        identity = get_jwt_identity()
+        user_type, user_id = identity.split(':')
+        user_id = int(user_id)
         
         if user_type == 'customer':
             user = Customer.query.get(user_id)
@@ -238,9 +246,10 @@ def get_profile():
 def update_profile():
     """Update current user profile"""
     try:
-        current_user = get_jwt_identity()
-        user_type = current_user['type']
-        user_id = current_user['id']
+        # FIXED: Parse the identity string to get user type and ID
+        identity = get_jwt_identity()
+        user_type, user_id = identity.split(':')
+        user_id = int(user_id)
         data = request.get_json()
         
         if user_type == 'customer':
