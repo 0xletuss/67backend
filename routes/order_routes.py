@@ -23,9 +23,30 @@ def create_order():
         
         data = request.get_json()
         
+        # Debug logging
+        print("Received order data:", data)
+        print("Data type:", type(data))
+        
         # Validate required fields
         if 'items' not in data or not data['items']:
             return jsonify({'error': 'Order items are required'}), 400
+        
+        # Check if items is a list
+        if not isinstance(data['items'], list):
+            return jsonify({'error': 'Items must be a list'}), 400
+        
+        # Validate each item structure
+        for idx, item in enumerate(data['items']):
+            print(f"Item {idx}:", item, "Type:", type(item))
+            
+            if not isinstance(item, dict):
+                return jsonify({'error': f'Item {idx} is not a valid object'}), 400
+            
+            if 'productId' not in item:
+                return jsonify({'error': f'Item {idx} missing productId'}), 400
+            
+            if 'quantity' not in item:
+                return jsonify({'error': f'Item {idx} missing quantity'}), 400
         
         # Create order
         order = Order(
@@ -42,27 +63,33 @@ def create_order():
         # Add order items and calculate total
         total_amount = 0
         for item in data['items']:
-            product = Product.query.get(item['productId'])
+            # Use dict access with explicit type checking
+            product_id = item['productId']
+            quantity = item['quantity']
+            
+            product = Product.query.get(product_id)
             
             if not product:
                 db.session.rollback()
-                return jsonify({'error': f'Product {item["productId"]} not found'}), 404
+                return jsonify({'error': f'Product {product_id} not found'}), 404
             
             if not product.isAvailable:
                 db.session.rollback()
                 return jsonify({'error': f'Product {product.productName} is not available'}), 400
             
             # Check inventory
-            if product.inventory and not product.inventory.check_availability(item['quantity']):
+            if product.inventory and not product.inventory.check_availability(quantity):
                 db.session.rollback()
                 return jsonify({'error': f'Insufficient stock for {product.productName}'}), 400
             
-            subtotal = float(product.unitPrice) * item['quantity']
+            # Use unitPrice from item if provided, otherwise from product
+            unit_price = float(item.get('unitPrice', product.unitPrice))
+            subtotal = unit_price * quantity
             
             order_item = OrderItem(
                 orderId=order.orderId,
                 productId=product.productId,
-                quantity=item['quantity'],
+                quantity=quantity,
                 subtotal=subtotal
             )
             
@@ -71,7 +98,7 @@ def create_order():
             
             # Update inventory
             if product.inventory:
-                product.inventory.update_stock(-item['quantity'])
+                product.inventory.update_stock(-quantity)
         
         order.totalAmount = total_amount
         
@@ -95,10 +122,20 @@ def create_order():
             'order': order.to_dict()
         }), 201
         
+    except KeyError as e:
+        db.session.rollback()
+        print(f"KeyError: {str(e)}")
+        return jsonify({'error': f'Missing required field: {str(e)}'}), 400
+    except TypeError as e:
+        db.session.rollback()
+        print(f"TypeError: {str(e)}")
+        return jsonify({'error': f'Invalid data type in request: {str(e)}'}), 400
     except Exception as e:
         db.session.rollback()
+        print(f"Exception: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
-
 
 @order_bp.route('/my-orders', methods=['GET'])
 @jwt_required()
