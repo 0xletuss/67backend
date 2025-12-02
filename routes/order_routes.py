@@ -21,11 +21,16 @@ def create_order():
         if current_user['type'] != 'customer':
             return jsonify({'error': 'Only customers can create orders'}), 403
         
-        data = request.get_json()
+        # FIXED: Properly get JSON data
+        data = request.get_json(force=True)
         
         # Debug logging
-        print("Received order data:", data)
+        print("=" * 50)
+        print("RECEIVED ORDER REQUEST")
+        print("=" * 50)
+        print("Raw data:", data)
         print("Data type:", type(data))
+        print("=" * 50)
         
         # Validate required fields
         if 'items' not in data or not data['items']:
@@ -33,11 +38,12 @@ def create_order():
         
         # Check if items is a list
         if not isinstance(data['items'], list):
+            print(f"ERROR: items is {type(data['items'])}, not list")
             return jsonify({'error': 'Items must be a list'}), 400
         
         # Validate each item structure
         for idx, item in enumerate(data['items']):
-            print(f"Item {idx}:", item, "Type:", type(item))
+            print(f"Validating item {idx}:", item, "Type:", type(item))
             
             if not isinstance(item, dict):
                 return jsonify({'error': f'Item {idx} is not a valid object'}), 400
@@ -47,6 +53,8 @@ def create_order():
             
             if 'quantity' not in item:
                 return jsonify({'error': f'Item {idx} missing quantity'}), 400
+        
+        print("All items validated successfully")
         
         # Create order
         order = Order(
@@ -60,10 +68,13 @@ def create_order():
         db.session.add(order)
         db.session.flush()  # Get order ID
         
+        print(f"Order created with ID: {order.orderId}")
+        
         # Add order items and calculate total
         total_amount = 0
-        for item in data['items']:
-            # Use dict access with explicit type checking
+        for idx, item in enumerate(data['items']):
+            print(f"Processing item {idx} for order...")
+            
             product_id = item['productId']
             quantity = item['quantity']
             
@@ -96,11 +107,14 @@ def create_order():
             db.session.add(order_item)
             total_amount += subtotal
             
+            print(f"Item {idx} added: {product.productName} x{quantity} = ₱{subtotal}")
+            
             # Update inventory
             if product.inventory:
                 product.inventory.update_stock(-quantity)
         
         order.totalAmount = total_amount
+        print(f"Total order amount: ₱{total_amount}")
         
         # Create delivery record if delivery type
         if order.type == 'Delivery':
@@ -114,8 +128,11 @@ def create_order():
                 estimatedTime=data.get('estimatedTime')
             )
             db.session.add(delivery)
+            print("Delivery record created")
         
         db.session.commit()
+        print("Order saved to database successfully")
+        print("=" * 50)
         
         return jsonify({
             'message': 'Order created successfully',
@@ -125,10 +142,14 @@ def create_order():
     except KeyError as e:
         db.session.rollback()
         print(f"KeyError: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': f'Missing required field: {str(e)}'}), 400
     except TypeError as e:
         db.session.rollback()
         print(f"TypeError: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': f'Invalid data type in request: {str(e)}'}), 400
     except Exception as e:
         db.session.rollback()
@@ -136,7 +157,7 @@ def create_order():
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
-
+    
 @order_bp.route('/my-orders', methods=['GET'])
 @jwt_required()
 def get_my_orders():
