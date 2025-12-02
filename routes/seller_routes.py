@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app import db
 from models.user import Seller
@@ -6,6 +6,10 @@ from models.products import Product, Inventory
 from models.order import Order, OrderItem
 from sqlalchemy import func
 from datetime import datetime, timedelta
+import cloudinary
+import cloudinary.uploader
+from werkzeug.utils import secure_filename
+import os
 
 seller_bp = Blueprint('seller', __name__)
 
@@ -24,6 +28,73 @@ def get_current_seller():
     except Exception as e:
         print(f"Error getting current seller: {e}")
         return None
+
+def allowed_file(filename):
+    """Check if file extension is allowed"""
+    ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'webp'}
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def upload_to_cloudinary(file, folder="products"):
+    """Upload file to Cloudinary and return URL"""
+    try:
+        # Upload to Cloudinary
+        result = cloudinary.uploader.upload(
+            file,
+            folder=folder,
+            resource_type="image",
+            allowed_formats=['png', 'jpg', 'jpeg', 'gif', 'webp'],
+            transformation=[
+                {'width': 800, 'height': 800, 'crop': 'limit'},
+                {'quality': 'auto'},
+                {'fetch_format': 'auto'}
+            ]
+        )
+        return result['secure_url']
+    except Exception as e:
+        print(f"Error uploading to Cloudinary: {e}")
+        raise e
+
+# Image Upload Endpoint
+@seller_bp.route('/upload-image', methods=['POST'])
+@jwt_required()
+def upload_image():
+    """Upload product image to Cloudinary"""
+    try:
+        seller = get_current_seller()
+        
+        if not seller:
+            return jsonify({'error': 'Seller profile not found'}), 404
+        
+        # Check if file is in request
+        if 'image' not in request.files:
+            return jsonify({'error': 'No image file provided'}), 400
+        
+        file = request.files['image']
+        
+        # Check if file is selected
+        if file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+        
+        # Check file extension
+        if not allowed_file(file.filename):
+            return jsonify({'error': 'Invalid file type. Allowed: png, jpg, jpeg, gif, webp'}), 400
+        
+        # Upload to Cloudinary
+        try:
+            image_url = upload_to_cloudinary(file, folder=f"products/seller_{seller.sellerId}")
+            
+            return jsonify({
+                'message': 'Image uploaded successfully',
+                'imageUrl': image_url
+            }), 200
+            
+        except Exception as upload_error:
+            print(f"Cloudinary upload error: {upload_error}")
+            return jsonify({'error': 'Failed to upload image to cloud storage'}), 500
+        
+    except Exception as e:
+        print(f"Error in upload_image: {e}")
+        return jsonify({'error': str(e)}), 500
 
 # Product Management
 @seller_bp.route('/products', methods=['GET'])
@@ -53,24 +124,32 @@ def create_product():
         
         data = request.get_json()
         
+        # Validate required fields
+        if not data.get('productName'):
+            return jsonify({'error': 'Product name is required'}), 400
+        
+        if not data.get('unitPrice'):
+            return jsonify({'error': 'Unit price is required'}), 400
+        
+        # Create product with exact database field names
         product = Product(
             sellerId=seller.sellerId,
-            productName=data['name'],
+            productName=data['productName'],
             description=data.get('description'),
             category=data.get('category'),
-            unitPrice=data['price'],
-            imageUrl=data.get('image_url'),
-            isAvailable=data.get('is_available', True)
+            unitPrice=float(data['unitPrice']),
+            imageUrl=data.get('imageUrl'),
+            isAvailable=bool(data.get('isAvailable', True))
         )
         
         db.session.add(product)
         db.session.flush()  # Get the product ID
         
-        # Create inventory record
+        # Create inventory record with default stock
         inventory = Inventory(
             productId=product.productId,
-            quantityInStock=data.get('stock_quantity', 0),
-            reorderLevel=data.get('reorder_level', 10)
+            quantityInStock=0,  # Default to 0, can be updated later
+            reorderLevel=10
         )
         
         db.session.add(inventory)
@@ -101,23 +180,21 @@ def update_product(product_id):
         
         data = request.get_json()
         
-        product.productName = data.get('name', product.productName)
-        product.description = data.get('description', product.description)
-        product.category = data.get('category', product.category)
-        product.unitPrice = data.get('price', product.unitPrice)
-        product.imageUrl = data.get('image_url', product.imageUrl)
-        product.isAvailable = data.get('is_available', product.isAvailable)
+        # Update with exact database field names
+        if 'productName' in data:
+            product.productName = data['productName']
+        if 'description' in data:
+            product.description = data['description']
+        if 'category' in data:
+            product.category = data['category']
+        if 'unitPrice' in data:
+            product.unitPrice = float(data['unitPrice'])
+        if 'imageUrl' in data:
+            product.imageUrl = data['imageUrl']
+        if 'isAvailable' in data:
+            product.isAvailable = bool(data['isAvailable'])
         
-        # Update inventory if stock_quantity provided
-        if 'stock_quantity' in data:
-            if product.inventory:
-                product.inventory.quantityInStock = data['stock_quantity']
-            else:
-                inventory = Inventory(
-                    productId=product.productId,
-                    quantityInStock=data['stock_quantity']
-                )
-                db.session.add(inventory)
+        product.updatedAt = datetime.utcnow()
         
         db.session.commit()
         
@@ -143,6 +220,15 @@ def delete_product(product_id):
         product = Product.query.filter_by(productId=product_id, sellerId=seller.sellerId).first()
         if not product:
             return jsonify({'error': 'Product not found'}), 404
+        
+        # Delete image from Cloudinary if exists
+        if product.imageUrl:
+            try:
+                # Extract public_id from URL
+                public_id = product.imageUrl.split('/')[-1].split('.')[0]
+                cloudinary.uploader.destroy(f"products/seller_{seller.sellerId}/{public_id}")
+            except:
+                pass  # Ignore cloudinary deletion errors
         
         db.session.delete(product)
         db.session.commit()
@@ -174,11 +260,13 @@ def update_inventory(product_id):
         # Update inventory
         if product.inventory:
             product.inventory.quantityInStock += quantity_change
-            product.inventory.lastRestocked = datetime.utcnow()
+            if quantity_change > 0:
+                product.inventory.lastRestocked = datetime.utcnow()
+            product.inventory.updatedAt = datetime.utcnow()
         else:
             inventory = Inventory(
                 productId=product_id,
-                quantityInStock=quantity_change,
+                quantityInStock=max(0, quantity_change),
                 lastRestocked=datetime.utcnow()
             )
             db.session.add(inventory)
@@ -204,7 +292,6 @@ def get_inventory_logs():
         if not seller:
             return jsonify({'error': 'Seller profile not found'}), 404
         
-        # Get all products for this seller
         products = Product.query.filter_by(sellerId=seller.sellerId).all()
         
         return jsonify({
@@ -273,6 +360,7 @@ def update_order_status(order_id):
             return jsonify({'error': 'Invalid status'}), 400
         
         order.status = new_status
+        order.updatedAt = datetime.utcnow()
         db.session.commit()
         
         return jsonify({
@@ -295,9 +383,8 @@ def get_revenue():
         if not seller:
             return jsonify({'error': 'Seller profile not found'}), 404
         
-        period = request.args.get('period', 'month')  # day, week, month, year
+        period = request.args.get('period', 'month')
         
-        # Calculate date range
         now = datetime.utcnow()
         if period == 'day':
             start_date = now - timedelta(days=1)
@@ -305,10 +392,9 @@ def get_revenue():
             start_date = now - timedelta(weeks=1)
         elif period == 'month':
             start_date = now - timedelta(days=30)
-        else:  # year
+        else:
             start_date = now - timedelta(days=365)
         
-        # Get completed orders
         orders = Order.query.filter(
             Order.sellerId == seller.sellerId,
             Order.status.in_(['Delivered', 'Completed']),
@@ -318,7 +404,6 @@ def get_revenue():
         total_revenue = sum(order.totalAmount for order in orders)
         total_orders = len(orders)
         
-        # Calculate revenue by day
         revenue_by_day = db.session.query(
             func.date(Order.orderDate).label('date'),
             func.sum(Order.totalAmount).label('revenue'),
@@ -356,7 +441,6 @@ def get_analytics():
         if not seller:
             return jsonify({'error': 'Seller profile not found'}), 404
         
-        # Top selling products
         top_products = db.session.query(
             Product.productId,
             Product.productName,
@@ -371,7 +455,6 @@ def get_analytics():
          .order_by(func.sum(OrderItem.quantity).desc())\
          .limit(10).all()
         
-        # Order statistics
         total_orders = Order.query.filter_by(sellerId=seller.sellerId).count()
         pending_orders = Order.query.filter_by(sellerId=seller.sellerId, status='Pending').count()
         completed_orders = Order.query.filter(
