@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app import db
-from models.products import Product, Inventory
+from models.product import Product, Inventory
 from models.user import Seller
 
 product_bp = Blueprint('product', __name__)
@@ -10,7 +10,7 @@ product_bp = Blueprint('product', __name__)
 
 @product_bp.route('/', methods=['GET'])
 def get_all_products():
-    """Get all available products (public)"""
+    """Get all available products (public) - No auth required"""
     try:
         # Query parameters for filtering
         category = request.args.get('category')
@@ -19,6 +19,7 @@ def get_all_products():
         min_price = request.args.get('min_price')
         max_price = request.args.get('max_price')
         
+        # Base query - get all available products
         query = Product.query.filter_by(isAvailable=True)
         
         # Apply filters
@@ -26,12 +27,15 @@ def get_all_products():
             query = query.filter_by(category=category)
         
         if seller_id:
-            query = query.filter_by(sellerId=seller_id)
+            query = query.filter_by(sellerId=int(seller_id))
         
         if search:
+            search_pattern = f'%{search}%'
             query = query.filter(
-                (Product.productName.contains(search)) | 
-                (Product.description.contains(search))
+                db.or_(
+                    Product.productName.ilike(search_pattern),
+                    Product.description.ilike(search_pattern)
+                )
             )
         
         if min_price:
@@ -48,6 +52,7 @@ def get_all_products():
         }), 200
         
     except Exception as e:
+        print(f"Error in get_all_products: {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -70,7 +75,9 @@ def get_product(product_id):
 def get_categories():
     """Get all unique product categories (public)"""
     try:
-        categories = db.session.query(Product.category).distinct().all()
+        categories = db.session.query(Product.category).distinct().filter(
+            Product.category.isnot(None)
+        ).all()
         categories = [cat[0] for cat in categories if cat[0]]
         
         return jsonify({
@@ -82,7 +89,7 @@ def get_categories():
         return jsonify({'error': str(e)}), 500
 
 
-@product_bp.route('/seller/<int:seller_id>', methods=['GET'])
+@product_bp.route('/seller/<int:seller_id>/products', methods=['GET'])
 def get_seller_products_public(seller_id):
     """Get all products from a specific seller (public)"""
     try:
@@ -107,17 +114,34 @@ def get_seller_products_public(seller_id):
 
 # ==================== SELLER PRODUCT MANAGEMENT ====================
 
-@product_bp.route('/seller/my-products', methods=['GET'])
+def get_current_seller():
+    """Helper function to get current seller from JWT token"""
+    try:
+        identity = get_jwt_identity()
+        user_type, user_id = identity.split(':')
+        user_id = int(user_id)
+        
+        if user_type != 'seller':
+            return None
+            
+        seller = Seller.query.get(user_id)
+        return seller
+    except Exception as e:
+        print(f"Error getting current seller: {e}")
+        return None
+
+
+@product_bp.route('/my-products', methods=['GET'])
 @jwt_required()
 def get_my_products():
     """Get all products for logged-in seller"""
     try:
-        current_user = get_jwt_identity()
+        seller = get_current_seller()
         
-        if current_user['type'] != 'seller':
-            return jsonify({'error': 'Only sellers can access this route'}), 403
+        if not seller:
+            return jsonify({'error': 'Seller not found'}), 403
         
-        products = Product.query.filter_by(sellerId=current_user['id']).all()
+        products = Product.query.filter_by(sellerId=seller.sellerId).all()
         
         return jsonify({
             'products': [product.to_dict() for product in products],
@@ -128,14 +152,14 @@ def get_my_products():
         return jsonify({'error': str(e)}), 500
 
 
-@product_bp.route('/seller/create', methods=['POST'])
+@product_bp.route('/create', methods=['POST'])
 @jwt_required()
 def create_product():
     """Create a new product (seller only)"""
     try:
-        current_user = get_jwt_identity()
+        seller = get_current_seller()
         
-        if current_user['type'] != 'seller':
+        if not seller:
             return jsonify({'error': 'Only sellers can create products'}), 403
         
         data = request.get_json()
@@ -148,7 +172,7 @@ def create_product():
         
         # Create new product
         product = Product(
-            sellerId=current_user['id'],
+            sellerId=seller.sellerId,
             productName=data['productName'],
             description=data.get('description'),
             unitPrice=data['unitPrice'],
@@ -180,14 +204,14 @@ def create_product():
         return jsonify({'error': str(e)}), 500
 
 
-@product_bp.route('/seller/<int:product_id>', methods=['PUT'])
+@product_bp.route('/<int:product_id>', methods=['PUT'])
 @jwt_required()
 def update_product(product_id):
     """Update a product (seller only)"""
     try:
-        current_user = get_jwt_identity()
+        seller = get_current_seller()
         
-        if current_user['type'] != 'seller':
+        if not seller:
             return jsonify({'error': 'Only sellers can update products'}), 403
         
         product = Product.query.get(product_id)
@@ -195,18 +219,24 @@ def update_product(product_id):
         if not product:
             return jsonify({'error': 'Product not found'}), 404
         
-        if product.sellerId != current_user['id']:
+        if product.sellerId != seller.sellerId:
             return jsonify({'error': 'You can only update your own products'}), 403
         
         data = request.get_json()
         
         # Update product fields
-        product.productName = data.get('productName', product.productName)
-        product.description = data.get('description', product.description)
-        product.unitPrice = data.get('unitPrice', product.unitPrice)
-        product.category = data.get('category', product.category)
-        product.imageUrl = data.get('imageUrl', product.imageUrl)
-        product.isAvailable = data.get('isAvailable', product.isAvailable)
+        if 'productName' in data:
+            product.productName = data['productName']
+        if 'description' in data:
+            product.description = data['description']
+        if 'unitPrice' in data:
+            product.unitPrice = data['unitPrice']
+        if 'category' in data:
+            product.category = data['category']
+        if 'imageUrl' in data:
+            product.imageUrl = data['imageUrl']
+        if 'isAvailable' in data:
+            product.isAvailable = data['isAvailable']
         
         # Update inventory if provided
         if product.inventory and 'quantityInStock' in data:
@@ -227,14 +257,14 @@ def update_product(product_id):
         return jsonify({'error': str(e)}), 500
 
 
-@product_bp.route('/seller/<int:product_id>', methods=['DELETE'])
+@product_bp.route('/<int:product_id>', methods=['DELETE'])
 @jwt_required()
 def delete_product(product_id):
     """Delete a product (seller only)"""
     try:
-        current_user = get_jwt_identity()
+        seller = get_current_seller()
         
-        if current_user['type'] != 'seller':
+        if not seller:
             return jsonify({'error': 'Only sellers can delete products'}), 403
         
         product = Product.query.get(product_id)
@@ -242,7 +272,7 @@ def delete_product(product_id):
         if not product:
             return jsonify({'error': 'Product not found'}), 404
         
-        if product.sellerId != current_user['id']:
+        if product.sellerId != seller.sellerId:
             return jsonify({'error': 'You can only delete your own products'}), 403
         
         db.session.delete(product)
@@ -255,14 +285,14 @@ def delete_product(product_id):
         return jsonify({'error': str(e)}), 500
 
 
-@product_bp.route('/seller/<int:product_id>/inventory', methods=['PUT'])
+@product_bp.route('/<int:product_id>/inventory', methods=['PUT'])
 @jwt_required()
 def update_inventory(product_id):
     """Update product inventory (seller only)"""
     try:
-        current_user = get_jwt_identity()
+        seller = get_current_seller()
         
-        if current_user['type'] != 'seller':
+        if not seller:
             return jsonify({'error': 'Only sellers can update inventory'}), 403
         
         product = Product.query.get(product_id)
@@ -270,7 +300,7 @@ def update_inventory(product_id):
         if not product:
             return jsonify({'error': 'Product not found'}), 404
         
-        if product.sellerId != current_user['id']:
+        if product.sellerId != seller.sellerId:
             return jsonify({'error': 'You can only update your own product inventory'}), 403
         
         data = request.get_json()
