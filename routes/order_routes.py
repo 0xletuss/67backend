@@ -30,7 +30,6 @@ def parse_jwt_identity():
 @jwt_required(optional=True)
 def create_order():
     """Create a new order (customer only)"""
-    # Handle preflight OPTIONS request
     if request.method == 'OPTIONS':
         response = jsonify({'status': 'ok'})
         response.headers.add('Access-Control-Allow-Origin', '*')
@@ -39,7 +38,6 @@ def create_order():
         return response, 200
     
     try:
-        # Parse JWT identity
         current_user = parse_jwt_identity()
         
         print("=" * 50)
@@ -50,22 +48,28 @@ def create_order():
         if current_user['type'] != 'customer':
             return jsonify({'error': 'Only customers can create orders'}), 403
         
-        # Get JSON data
         data = request.get_json(force=True)
         
-        print("Order data:", data)
+        print("Full request data:", data)
+        print("Items in request:", data.get('items'))
+        print("Items type:", type(data.get('items')))
+        print("Items length:", len(data.get('items', [])))
         print("=" * 50)
         
         # Validate required fields
         if 'items' not in data or not data['items']:
+            print("ERROR: No items in request")
             return jsonify({'error': 'Order items are required'}), 400
         
         # Check if items is a list
         if not isinstance(data['items'], list):
+            print("ERROR: Items is not a list")
             return jsonify({'error': 'Items must be a list'}), 400
         
         # Validate each item structure
         for idx, item in enumerate(data['items']):
+            print(f"Validating item {idx}: {item}")
+            
             if not isinstance(item, dict):
                 return jsonify({'error': f'Item {idx} is not a valid object'}), 400
             
@@ -75,7 +79,7 @@ def create_order():
             if 'quantity' not in item:
                 return jsonify({'error': f'Item {idx} missing quantity'}), 400
         
-        print("All items validated successfully")
+        print("✓ All items validated successfully")
         
         # Get sellerId from first product
         first_product = Product.query.get(data['items'][0]['productId'])
@@ -83,6 +87,7 @@ def create_order():
             return jsonify({'error': 'First product not found'}), 404
         
         seller_id = first_product.sellerId
+        print(f"Seller ID: {seller_id}")
         
         # Create order
         order = Order(
@@ -91,39 +96,64 @@ def create_order():
             type=data.get('type', 'Delivery'),
             deliveryAddress=data.get('deliveryAddress'),
             notes=data.get('notes'),
-            totalAmount=0  # Will be calculated
+            totalAmount=0
         )
         
         db.session.add(order)
-        db.session.flush()  # Get order ID
+        db.session.flush()
         
-        print(f"Order created with ID: {order.orderId}")
+        print(f"✓ Order created with ID: {order.orderId}")
         
         # Add order items and calculate total
         total_amount = 0
+        items_created_count = 0
+        
+        print("\n--- PROCESSING ORDER ITEMS ---")
         for idx, item in enumerate(data['items']):
+            print(f"\nItem {idx + 1}:")
+            print(f"  Raw item data: {item}")
+            
             product_id = item['productId']
             quantity = item['quantity']
+            
+            print(f"  Product ID: {product_id}")
+            print(f"  Quantity: {quantity}")
             
             product = Product.query.get(product_id)
             
             if not product:
+                print(f"  ERROR: Product {product_id} not found")
                 db.session.rollback()
                 return jsonify({'error': f'Product {product_id} not found'}), 404
             
+            print(f"  ✓ Product found: {product.productName}")
+            print(f"  Available: {product.isAvailable}")
+            
             if not product.isAvailable:
+                print(f"  ERROR: Product not available")
                 db.session.rollback()
                 return jsonify({'error': f'Product {product.productName} is not available'}), 400
             
             # Check inventory
-            if product.inventory and not product.inventory.check_availability(quantity):
-                db.session.rollback()
-                return jsonify({'error': f'Insufficient stock for {product.productName}'}), 400
+            if product.inventory:
+                print(f"  Current stock: {product.inventory.quantityInStock}")
+                if not product.inventory.check_availability(quantity):
+                    print(f"  ERROR: Insufficient stock")
+                    db.session.rollback()
+                    return jsonify({'error': f'Insufficient stock for {product.productName}'}), 400
+                print(f"  ✓ Stock check passed")
+            else:
+                print(f"  WARNING: No inventory record")
             
-            # Use unitPrice from item if provided, otherwise from product
+            # Calculate prices
             unit_price = float(item.get('unitPrice', product.unitPrice))
             subtotal = unit_price * quantity
             
+            print(f"  Unit price: ₱{unit_price}")
+            print(f"  Subtotal: ₱{subtotal}")
+            
+            # Create order item
+            print(f"  Creating OrderItem...")
             order_item = OrderItem(
                 orderId=order.orderId,
                 productId=product.productId,
@@ -132,16 +162,25 @@ def create_order():
             )
             
             db.session.add(order_item)
+            items_created_count += 1
             total_amount += subtotal
             
-            print(f"Item {idx}: {product.productName} x{quantity} = ₱{subtotal}")
+            print(f"  ✓ OrderItem added to session (count: {items_created_count})")
             
             # Update inventory
             if product.inventory:
+                old_stock = product.inventory.quantityInStock
                 product.inventory.update_stock(-quantity)
+                print(f"  Inventory: {old_stock} -> {product.inventory.quantityInStock}")
+        
+        print("\n" + "=" * 50)
+        print(f"ORDER ITEMS SUMMARY:")
+        print(f"  Items processed: {len(data['items'])}")
+        print(f"  Items created: {items_created_count}")
+        print(f"  Total amount: ₱{total_amount}")
+        print("=" * 50)
         
         order.totalAmount = total_amount
-        print(f"Total order amount: ₱{total_amount}")
         
         # Create delivery record if delivery type
         if order.type == 'Delivery':
@@ -155,11 +194,19 @@ def create_order():
                 estimatedTime=data.get('estimatedTime')
             )
             db.session.add(delivery)
-            print("Delivery record created")
+            print("✓ Delivery record created")
         
+        print("\nCommitting transaction...")
         db.session.commit()
-        print("Order saved successfully!")
+        print("✓ TRANSACTION COMMITTED SUCCESSFULLY!")
         print("=" * 50)
+        
+        # Verify order items were saved
+        saved_items = OrderItem.query.filter_by(orderId=order.orderId).all()
+        print(f"\n✓✓✓ VERIFICATION: {len(saved_items)} order items found in database for order {order.orderId}")
+        for si in saved_items:
+            print(f"  - Item ID: {si.orderItemId}, Product: {si.productId}, Qty: {si.quantity}")
+        print("=" * 50 + "\n")
         
         response = jsonify({
             'message': 'Order created successfully',
@@ -169,14 +216,16 @@ def create_order():
         return response, 201
         
     except ValueError as e:
+        print(f"ValueError: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': 'Invalid token format. Please login again.'}), 401
     except Exception as e:
         db.session.rollback()
-        print(f"Error: {str(e)}")
+        print(f"ERROR: {str(e)}")
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
-
 
 @order_bp.route('/my-orders', methods=['GET'])
 @jwt_required()
