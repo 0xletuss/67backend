@@ -39,6 +39,7 @@ def get_seller_products():
         return jsonify({'products': [p.to_dict() for p in products]}), 200
         
     except Exception as e:
+        print(f"Error in get_seller_products: {e}")
         return jsonify({'error': str(e)}), 500
 
 @seller_bp.route('/products', methods=['POST'])
@@ -59,7 +60,6 @@ def create_product():
             category=data.get('category'),
             unitPrice=data['price'],
             imageUrl=data.get('image_url'),
-            preparation_time=data.get('preparation_time'),
             isAvailable=data.get('is_available', True)
         )
         
@@ -83,6 +83,7 @@ def create_product():
         
     except Exception as e:
         db.session.rollback()
+        print(f"Error in create_product: {e}")
         return jsonify({'error': str(e)}), 500
 
 @seller_bp.route('/products/<int:product_id>', methods=['PUT'])
@@ -105,7 +106,6 @@ def update_product(product_id):
         product.category = data.get('category', product.category)
         product.unitPrice = data.get('price', product.unitPrice)
         product.imageUrl = data.get('image_url', product.imageUrl)
-        product.preparation_time = data.get('preparation_time', product.preparation_time)
         product.isAvailable = data.get('is_available', product.isAvailable)
         
         # Update inventory if stock_quantity provided
@@ -128,6 +128,7 @@ def update_product(product_id):
         
     except Exception as e:
         db.session.rollback()
+        print(f"Error in update_product: {e}")
         return jsonify({'error': str(e)}), 500
 
 @seller_bp.route('/products/<int:product_id>', methods=['DELETE'])
@@ -150,6 +151,7 @@ def delete_product(product_id):
         
     except Exception as e:
         db.session.rollback()
+        print(f"Error in delete_product: {e}")
         return jsonify({'error': str(e)}), 500
 
 # Inventory Management
@@ -190,6 +192,7 @@ def update_inventory(product_id):
         
     except Exception as e:
         db.session.rollback()
+        print(f"Error in update_inventory: {e}")
         return jsonify({'error': str(e)}), 500
 
 @seller_bp.route('/inventory/logs', methods=['GET'])
@@ -216,6 +219,7 @@ def get_inventory_logs():
         }), 200
         
     except Exception as e:
+        print(f"Error in get_inventory_logs: {e}")
         return jsonify({'error': str(e)}), 500
 
 # Order Management
@@ -245,6 +249,7 @@ def get_seller_orders():
         return jsonify({'orders': [order.to_dict() for order in orders]}), 200
         
     except Exception as e:
+        print(f"Error in get_seller_orders: {e}")
         return jsonify({'error': str(e)}), 500
 
 @seller_bp.route('/orders/<int:order_id>/status', methods=['PUT'])
@@ -277,6 +282,7 @@ def update_order_status(order_id):
         
     except Exception as e:
         db.session.rollback()
+        print(f"Error in update_order_status: {e}")
         return jsonify({'error': str(e)}), 500
 
 # Revenue & Analytics
@@ -338,6 +344,7 @@ def get_revenue():
         }), 200
         
     except Exception as e:
+        print(f"Error in get_revenue: {e}")
         return jsonify({'error': str(e)}), 500
 
 @seller_bp.route('/analytics', methods=['GET'])
@@ -389,4 +396,5 @@ def get_analytics():
         }), 200
         
     except Exception as e:
+        print(f"Error in get_analytics: {e}")
         return jsonify({'error': str(e)}), 500

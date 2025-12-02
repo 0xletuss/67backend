@@ -12,7 +12,6 @@ class Product(db.Model):
     isAvailable = db.Column(db.Boolean, default=True)
     category = db.Column(db.String(50))
     imageUrl = db.Column(db.String(255))
-    preparation_time = db.Column(db.Integer)
     createdAt = db.Column(db.DateTime, default=datetime.utcnow)
     updatedAt = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -31,7 +30,6 @@ class Product(db.Model):
                 'isAvailable': self.isAvailable,
                 'category': self.category,
                 'imageUrl': self.imageUrl,
-                'preparationTime': self.preparation_time,
                 'createdAt': self.createdAt.isoformat() if self.createdAt else None,
                 'updatedAt': self.updatedAt.isoformat() if self.updatedAt else None,
                 'inventory': self.inventory.to_dict() if self.inventory else None,
@@ -50,7 +48,6 @@ class Product(db.Model):
                 'isAvailable': self.isAvailable,
                 'category': self.category,
                 'imageUrl': self.imageUrl,
-                'preparationTime': self.preparation_time,
                 'stock': 0
             }
 
