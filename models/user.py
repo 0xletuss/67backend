@@ -99,4 +99,4 @@ class Seller(db.Model):
             'createdAt': self.createdAt.isoformat() if self.createdAt else None,
             'isActive': self.isActive,
             'isVerified': self.isVerified
-        }
+        }       
