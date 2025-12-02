@@ -69,9 +69,17 @@ def create_order():
         
         print("All items validated successfully")
         
+        # Get sellerId from first product
+        first_product = Product.query.get(data['items'][0]['productId'])
+        if not first_product:
+            return jsonify({'error': 'First product not found'}), 404
+        
+        seller_id = first_product.sellerId
+        
         # Create order
         order = Order(
             customerId=current_user['id'],
+            sellerId=seller_id,  # Added sellerId
             type=data.get('type', 'Delivery'),
             deliveryAddress=data.get('deliveryAddress'),
             notes=data.get('notes'),
