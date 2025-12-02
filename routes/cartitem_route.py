@@ -1,30 +1,22 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-from typing import List
+from flask import Blueprint, request, jsonify
+from flask_jwt_extended import jwt_required, get_jwt_identity
 from database import get_db
-from models.cartitem_model import CartItem, CartItemCreate, CartItemUpdate, CartWithItems
-from auth import get_current_user
 import mysql.connector
 
-router = APIRouter(
-    prefix="/cart-items",
-    tags=["cart-items"]
-)
+cartitem_bp = Blueprint('cartitem', __name__, url_prefix='/api/cart-items')
 
 # Get current customer's cart with all items
-@router.get("/my-cart", response_model=CartWithItems)
-def get_my_cart_with_items(
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
+@cartitem_bp.route('/my-cart', methods=['GET'])
+@jwt_required()
+def get_my_cart_with_items():
     """Get the logged-in customer's cart with all items and product details"""
+    current_user = get_jwt_identity()
+    
     if current_user.get("userType") != "customer":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only customers can access cart"
-        )
+        return jsonify({"detail": "Only customers can access cart"}), 403
     
     customer_id = current_user.get("userId")
+    db = get_db()
     cursor = db.cursor(dictionary=True)
     
     try:
@@ -56,62 +48,51 @@ def get_my_cart_with_items(
         subtotal = sum(item["unitPrice"] * item["quantity"] for item in items)
         total_items = sum(item["quantity"] for item in items)
         
-        return {
+        return jsonify({
             "cart": cart,
             "items": items,
-            "subtotal": subtotal,
+            "subtotal": float(subtotal),
             "totalItems": total_items
-        }
+        }), 200
     except mysql.connector.Error as err:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database error: {err}"
-        )
+        return jsonify({"detail": f"Database error: {err}"}), 500
     finally:
         cursor.close()
 
 # Add item to cart
-@router.post("/", response_model=CartItem, status_code=status.HTTP_201_CREATED)
-def add_to_cart(
-    item: CartItemCreate,
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
+@cartitem_bp.route('/', methods=['POST'])
+@jwt_required()
+def add_to_cart():
     """Add an item to the customer's cart"""
+    current_user = get_jwt_identity()
+    
     if current_user.get("userType") != "customer":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only customers can add to cart"
-        )
+        return jsonify({"detail": "Only customers can add to cart"}), 403
+    
+    data = request.get_json()
+    product_id = data.get('productId')
+    quantity = data.get('quantity', 1)
     
     customer_id = current_user.get("userId")
+    db = get_db()
     cursor = db.cursor(dictionary=True)
     
     try:
         # Check product availability and stock
         cursor.execute(
             "SELECT stock, isAvailable FROM product WHERE productId = %s",
-            (item.productId,)
+            (product_id,)
         )
         product = cursor.fetchone()
         
         if not product:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Product not found"
-            )
+            return jsonify({"detail": "Product not found"}), 404
         
         if not product["isAvailable"]:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Product is not available"
-            )
+            return jsonify({"detail": "Product is not available"}), 400
         
-        if product["stock"] < item.quantity:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Insufficient stock. Available: {product['stock']}"
-            )
+        if product["stock"] < quantity:
+            return jsonify({"detail": f"Insufficient stock. Available: {product['stock']}"}), 400
         
         # Get or create cart
         cursor.execute(
@@ -130,19 +111,16 @@ def add_to_cart(
         # Check if item already exists in cart
         cursor.execute(
             "SELECT * FROM cartitem WHERE cartId = %s AND productId = %s",
-            (cart_id, item.productId)
+            (cart_id, product_id)
         )
         existing_item = cursor.fetchone()
         
         if existing_item:
             # Update quantity
-            new_quantity = existing_item["quantity"] + item.quantity
+            new_quantity = existing_item["quantity"] + quantity
             
             if new_quantity > product["stock"]:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Total quantity exceeds stock. Available: {product['stock']}"
-                )
+                return jsonify({"detail": f"Total quantity exceeds stock. Available: {product['stock']}"}), 400
             
             cursor.execute(
                 "UPDATE cartitem SET quantity = %s WHERE cartItemId = %s",
@@ -155,12 +133,12 @@ def add_to_cart(
                 (existing_item["cartItemId"],)
             )
             updated_item = cursor.fetchone()
-            return updated_item
+            return jsonify(updated_item), 200
         else:
             # Add new item
             cursor.execute(
                 "INSERT INTO cartitem (cartId, productId, quantity) VALUES (%s, %s, %s)",
-                (cart_id, item.productId, item.quantity)
+                (cart_id, product_id, quantity)
             )
             db.commit()
             
@@ -170,33 +148,29 @@ def add_to_cart(
                 (cart_item_id,)
             )
             new_item = cursor.fetchone()
-            return new_item
+            return jsonify(new_item), 201
             
     except mysql.connector.Error as err:
         db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database error: {err}"
-        )
+        return jsonify({"detail": f"Database error: {err}"}), 500
     finally:
         cursor.close()
 
 # Update cart item quantity
-@router.put("/{cart_item_id}", response_model=CartItem)
-def update_cart_item(
-    cart_item_id: int,
-    item_update: CartItemUpdate,
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
+@cartitem_bp.route('/<int:cart_item_id>', methods=['PUT'])
+@jwt_required()
+def update_cart_item(cart_item_id):
     """Update the quantity of a cart item"""
+    current_user = get_jwt_identity()
+    
     if current_user.get("userType") != "customer":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only customers can update cart items"
-        )
+        return jsonify({"detail": "Only customers can update cart items"}), 403
+    
+    data = request.get_json()
+    quantity = data.get('quantity')
     
     customer_id = current_user.get("userId")
+    db = get_db()
     cursor = db.cursor(dictionary=True)
     
     try:
@@ -211,65 +185,47 @@ def update_cart_item(
         cart_item = cursor.fetchone()
         
         if not cart_item:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Cart item not found"
-            )
+            return jsonify({"detail": "Cart item not found"}), 404
         
         if cart_item["customerId"] != customer_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied"
-            )
+            return jsonify({"detail": "Access denied"}), 403
         
         # Check stock if updating quantity
-        if item_update.quantity is not None:
+        if quantity is not None:
             if not cart_item["isAvailable"]:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Product is no longer available"
-                )
+                return jsonify({"detail": "Product is no longer available"}), 400
             
-            if item_update.quantity > cart_item["stock"]:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Insufficient stock. Available: {cart_item['stock']}"
-                )
+            if quantity > cart_item["stock"]:
+                return jsonify({"detail": f"Insufficient stock. Available: {cart_item['stock']}"}), 400
             
             cursor.execute(
                 "UPDATE cartitem SET quantity = %s WHERE cartItemId = %s",
-                (item_update.quantity, cart_item_id)
+                (quantity, cart_item_id)
             )
             db.commit()
         
         cursor.execute("SELECT * FROM cartitem WHERE cartItemId = %s", (cart_item_id,))
         updated_item = cursor.fetchone()
-        return updated_item
+        return jsonify(updated_item), 200
         
     except mysql.connector.Error as err:
         db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database error: {err}"
-        )
+        return jsonify({"detail": f"Database error: {err}"}), 500
     finally:
         cursor.close()
 
 # Remove item from cart
-@router.delete("/{cart_item_id}", status_code=status.HTTP_204_NO_CONTENT)
-def remove_from_cart(
-    cart_item_id: int,
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
+@cartitem_bp.route('/<int:cart_item_id>', methods=['DELETE'])
+@jwt_required()
+def remove_from_cart(cart_item_id):
     """Remove an item from the cart"""
+    current_user = get_jwt_identity()
+    
     if current_user.get("userType") != "customer":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only customers can remove cart items"
-        )
+        return jsonify({"detail": "Only customers can remove cart items"}), 403
     
     customer_id = current_user.get("userId")
+    db = get_db()
     cursor = db.cursor(dictionary=True)
     
     try:
@@ -283,45 +239,34 @@ def remove_from_cart(
         cart_item = cursor.fetchone()
         
         if not cart_item:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Cart item not found"
-            )
+            return jsonify({"detail": "Cart item not found"}), 404
         
         if cart_item["customerId"] != customer_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied"
-            )
+            return jsonify({"detail": "Access denied"}), 403
         
         cursor.execute("DELETE FROM cartitem WHERE cartItemId = %s", (cart_item_id,))
         db.commit()
         
-        return None
+        return '', 204
         
     except mysql.connector.Error as err:
         db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database error: {err}"
-        )
+        return jsonify({"detail": f"Database error: {err}"}), 500
     finally:
         cursor.close()
 
 # Clear all items from cart
-@router.delete("/my-cart/clear", status_code=status.HTTP_204_NO_CONTENT)
-def clear_cart(
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
+@cartitem_bp.route('/my-cart/clear', methods=['DELETE'])
+@jwt_required()
+def clear_cart():
     """Clear all items from the customer's cart"""
+    current_user = get_jwt_identity()
+    
     if current_user.get("userType") != "customer":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only customers can clear cart"
-        )
+        return jsonify({"detail": "Only customers can clear cart"}), 403
     
     customer_id = current_user.get("userId")
+    db = get_db()
     cursor = db.cursor(dictionary=True)
     
     try:
@@ -336,13 +281,10 @@ def clear_cart(
             cursor.execute("DELETE FROM cartitem WHERE cartId = %s", (cart["cartId"],))
             db.commit()
         
-        return None
+        return '', 204
         
     except mysql.connector.Error as err:
         db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database error: {err}"
-        )
+        return jsonify({"detail": f"Database error: {err}"}), 500
     finally:
         cursor.close()

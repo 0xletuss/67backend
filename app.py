@@ -7,7 +7,6 @@ import os
 import cloudinary
 import cloudinary.uploader
 import cloudinary.api
-from routes import cartitem_route
 
 # Initialize extensions
 db = SQLAlchemy()
@@ -75,7 +74,8 @@ def create_app():
     from routes.admin_routes import admin_bp
     from routes.product_routes import product_bp
     from routes.order_routes import order_bp
-    from routes import cart_route, cartitem_route
+    from routes.cart_route import cart_bp
+    from routes.cartitem_route import cartitem_bp
     
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(customer_bp, url_prefix='/api/customer')
@@ -83,8 +83,8 @@ def create_app():
     app.register_blueprint(admin_bp, url_prefix='/api/admin')
     app.register_blueprint(product_bp, url_prefix='/api/products')
     app.register_blueprint(order_bp, url_prefix='/api/orders')
-    app.include_router(cart_route.router)
-    app.include_router(cartitem_route.router)
+    app.register_blueprint(cart_bp)
+    app.register_blueprint(cartitem_bp)
     
     # Create tables
     with app.app_context():
