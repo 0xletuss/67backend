@@ -2,7 +2,6 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app import db
 from models.user import Admin, Customer, Seller
-
 from models.order import Order
 from models.products import Product
 from sqlalchemy import func
@@ -10,50 +9,95 @@ from datetime import datetime, timedelta
 
 admin_bp = Blueprint('admin', __name__)
 
-def is_admin(user_id):
-    user = User.query.get(user_id)
-    return user and user.role == 'admin'
+def get_current_admin():
+    """Helper function to get current admin from JWT token"""
+    try:
+        identity = get_jwt_identity()
+        user_type, user_id = identity.split(':')
+        user_id = int(user_id)
+        
+        if user_type != 'admin':
+            return None
+            
+        admin = Admin.query.get(user_id)
+        return admin
+    except Exception as e:
+        print(f"Error getting current admin: {e}")
+        return None
 
 # User Management
-@admin_bp.route('/users', methods=['GET'])
+@admin_bp.route('/customers', methods=['GET'])
 @jwt_required()
-def get_all_users():
+def get_all_customers():
     try:
-        current_user = get_jwt_identity()
-        if not is_admin(current_user['id']):
+        admin = get_current_admin()
+        if not admin:
             return jsonify({'error': 'Unauthorized'}), 403
         
-        role = request.args.get('role')
+        customers = Customer.query.all()
         
-        query = User.query
-        if role:
-            query = query.filter_by(role=role)
-        
-        users = query.all()
-        
-        return jsonify({'users': [u.to_dict() for u in users]}), 200
+        return jsonify({'customers': [c.to_dict() for c in customers]}), 200
         
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@admin_bp.route('/users/<int:user_id>/toggle-active', methods=['PUT'])
+@admin_bp.route('/sellers', methods=['GET'])
 @jwt_required()
-def toggle_user_active(user_id):
+def get_all_sellers():
     try:
-        current_user = get_jwt_identity()
-        if not is_admin(current_user['id']):
+        admin = get_current_admin()
+        if not admin:
             return jsonify({'error': 'Unauthorized'}), 403
         
-        user = User.query.get(user_id)
-        if not user:
-            return jsonify({'error': 'User not found'}), 404
+        sellers = Seller.query.all()
         
-        user.is_active = not user.is_active
+        return jsonify({'sellers': [s.to_dict() for s in sellers]}), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@admin_bp.route('/customers/<int:customer_id>/toggle-active', methods=['PUT'])
+@jwt_required()
+def toggle_customer_active(customer_id):
+    try:
+        admin = get_current_admin()
+        if not admin:
+            return jsonify({'error': 'Unauthorized'}), 403
+        
+        customer = Customer.query.get(customer_id)
+        if not customer:
+            return jsonify({'error': 'Customer not found'}), 404
+        
+        customer.isActive = not customer.isActive
         db.session.commit()
         
         return jsonify({
-            'message': f'User {"activated" if user.is_active else "deactivated"} successfully',
-            'user': user.to_dict()
+            'message': f'Customer {"activated" if customer.isActive else "deactivated"} successfully',
+            'customer': customer.to_dict()
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@admin_bp.route('/sellers/<int:seller_id>/toggle-active', methods=['PUT'])
+@jwt_required()
+def toggle_seller_active(seller_id):
+    try:
+        admin = get_current_admin()
+        if not admin:
+            return jsonify({'error': 'Unauthorized'}), 403
+        
+        seller = Seller.query.get(seller_id)
+        if not seller:
+            return jsonify({'error': 'Seller not found'}), 404
+        
+        seller.isActive = not seller.isActive
+        db.session.commit()
+        
+        return jsonify({
+            'message': f'Seller {"activated" if seller.isActive else "deactivated"} successfully',
+            'seller': seller.to_dict()
         }), 200
         
     except Exception as e:
@@ -65,11 +109,11 @@ def toggle_user_active(user_id):
 @jwt_required()
 def get_pending_sellers():
     try:
-        current_user = get_jwt_identity()
-        if not is_admin(current_user['id']):
+        admin = get_current_admin()
+        if not admin:
             return jsonify({'error': 'Unauthorized'}), 403
         
-        sellers = Seller.query.filter_by(is_verified=False).all()
+        sellers = Seller.query.filter_by(isVerified=False).all()
         
         return jsonify({'sellers': [s.to_dict() for s in sellers]}), 200
         
@@ -80,8 +124,8 @@ def get_pending_sellers():
 @jwt_required()
 def verify_seller(seller_id):
     try:
-        current_user = get_jwt_identity()
-        if not is_admin(current_user['id']):
+        admin = get_current_admin()
+        if not admin:
             return jsonify({'error': 'Unauthorized'}), 403
         
         seller = Seller.query.get(seller_id)
@@ -89,11 +133,11 @@ def verify_seller(seller_id):
             return jsonify({'error': 'Seller not found'}), 404
         
         data = request.get_json()
-        seller.is_verified = data.get('is_verified', True)
+        seller.isVerified = data.get('is_verified', True)
         db.session.commit()
         
         return jsonify({
-            'message': f'Seller {"verified" if seller.is_verified else "unverified"} successfully',
+            'message': f'Seller {"verified" if seller.isVerified else "unverified"} successfully',
             'seller': seller.to_dict()
         }), 200
         
@@ -106,38 +150,39 @@ def verify_seller(seller_id):
 @jwt_required()
 def get_dashboard_stats():
     try:
-        current_user = get_jwt_identity()
-        if not is_admin(current_user['id']):
+        admin = get_current_admin()
+        if not admin:
             return jsonify({'error': 'Unauthorized'}), 403
         
         # User statistics
-        total_users = User.query.count()
         total_customers = Customer.query.count()
+        active_customers = Customer.query.filter_by(isActive=True).count()
         total_sellers = Seller.query.count()
-        verified_sellers = Seller.query.filter_by(is_verified=True).count()
+        verified_sellers = Seller.query.filter_by(isVerified=True).count()
         
         # Order statistics
         total_orders = Order.query.count()
-        pending_orders = Order.query.filter_by(status='pending').count()
-        completed_orders = Order.query.filter_by(status='completed').count()
+        pending_orders = Order.query.filter_by(status='Pending').count()
+        completed_orders = Order.query.filter(
+            Order.status.in_(['Delivered', 'Completed'])
+        ).count()
         
         # Revenue statistics (last 30 days)
         thirty_days_ago = datetime.utcnow() - timedelta(days=30)
-        recent_revenue = db.session.query(func.sum(Order.total_amount)).filter(
-            Order.status == 'completed',
-            Order.payment_status == 'paid',
-            Order.created_at >= thirty_days_ago
+        recent_revenue = db.session.query(func.sum(Order.totalAmount)).filter(
+            Order.status.in_(['Delivered', 'Completed']),
+            Order.orderDate >= thirty_days_ago
         ).scalar() or 0
         
         # Product statistics
         total_products = Product.query.count()
-        available_products = Product.query.filter_by(is_available=True).count()
+        available_products = Product.query.filter_by(isAvailable=True).count()
         
         return jsonify({
             'users': {
-                'total': total_users,
-                'customers': total_customers,
-                'sellers': total_sellers,
+                'total_customers': total_customers,
+                'active_customers': active_customers,
+                'total_sellers': total_sellers,
                 'verified_sellers': verified_sellers
             },
             'orders': {
@@ -162,8 +207,8 @@ def get_dashboard_stats():
 @jwt_required()
 def get_all_orders():
     try:
-        current_user = get_jwt_identity()
-        if not is_admin(current_user['id']):
+        admin = get_current_admin()
+        if not admin:
             return jsonify({'error': 'Unauthorized'}), 403
         
         status = request.args.get('status')
@@ -172,7 +217,7 @@ def get_all_orders():
         if status:
             query = query.filter_by(status=status)
         
-        orders = query.order_by(Order.created_at.desc()).limit(100).all()
+        orders = query.order_by(Order.orderDate.desc()).limit(100).all()
         
         return jsonify({'orders': [o.to_dict() for o in orders]}), 200
         
@@ -183,8 +228,8 @@ def get_all_orders():
 @jwt_required()
 def get_order_details_admin(order_id):
     try:
-        current_user = get_jwt_identity()
-        if not is_admin(current_user['id']):
+        admin = get_current_admin()
+        if not admin:
             return jsonify({'error': 'Unauthorized'}), 403
         
         order = Order.query.get(order_id)
@@ -201,8 +246,8 @@ def get_order_details_admin(order_id):
 @jwt_required()
 def get_all_products_admin():
     try:
-        current_user = get_jwt_identity()
-        if not is_admin(current_user['id']):
+        admin = get_current_admin()
+        if not admin:
             return jsonify({'error': 'Unauthorized'}), 403
         
         products = Product.query.all()
@@ -216,19 +261,19 @@ def get_all_products_admin():
 @jwt_required()
 def toggle_product_availability(product_id):
     try:
-        current_user = get_jwt_identity()
-        if not is_admin(current_user['id']):
+        admin = get_current_admin()
+        if not admin:
             return jsonify({'error': 'Unauthorized'}), 403
         
         product = Product.query.get(product_id)
         if not product:
             return jsonify({'error': 'Product not found'}), 404
         
-        product.is_available = not product.is_available
+        product.isAvailable = not product.isAvailable
         db.session.commit()
         
         return jsonify({
-            'message': f'Product {"enabled" if product.is_available else "disabled"} successfully',
+            'message': f'Product {"enabled" if product.isAvailable else "disabled"} successfully',
             'product': product.to_dict()
         }), 200
         

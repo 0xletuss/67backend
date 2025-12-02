@@ -6,16 +6,27 @@ from models.order import Order
 
 customer_bp = Blueprint('customer', __name__)
 
-def get_customer_id(user_id):
-    customer = Customer.query.filter_by(user_id=user_id).first()
-    return customer.id if customer else None
+def get_current_customer():
+    """Helper function to get current customer from JWT token"""
+    try:
+        identity = get_jwt_identity()
+        user_type, user_id = identity.split(':')
+        user_id = int(user_id)
+        
+        if user_type != 'customer':
+            return None
+            
+        customer = Customer.query.get(user_id)
+        return customer
+    except Exception as e:
+        print(f"Error getting current customer: {e}")
+        return None
 
 @customer_bp.route('/profile', methods=['GET'])
 @jwt_required()
 def get_profile():
     try:
-        current_user = get_jwt_identity()
-        customer = Customer.query.filter_by(user_id=current_user['id']).first()
+        customer = get_current_customer()
         
         if not customer:
             return jsonify({'error': 'Customer profile not found'}), 404
@@ -29,20 +40,20 @@ def get_profile():
 @jwt_required()
 def update_profile():
     try:
-        current_user = get_jwt_identity()
-        customer = Customer.query.filter_by(user_id=current_user['id']).first()
+        customer = get_current_customer()
         
         if not customer:
             return jsonify({'error': 'Customer profile not found'}), 404
         
         data = request.get_json()
         
-        customer.first_name = data.get('first_name', customer.first_name)
-        customer.last_name = data.get('last_name', customer.last_name)
-        customer.phone = data.get('phone', customer.phone)
+        customer.customerName = data.get('customerName', customer.customerName)
+        customer.phoneNumber = data.get('phoneNumber', customer.phoneNumber)
         customer.address = data.get('address', customer.address)
-        customer.city = data.get('city', customer.city)
-        customer.postal_code = data.get('postal_code', customer.postal_code)
+        
+        # Update password if provided
+        if 'password' in data and data['password']:
+            customer.set_password(data['password'])
         
         db.session.commit()
         
@@ -59,19 +70,18 @@ def update_profile():
 @jwt_required()
 def get_customer_orders():
     try:
-        current_user = get_jwt_identity()
-        customer_id = get_customer_id(current_user['id'])
+        customer = get_current_customer()
         
-        if not customer_id:
+        if not customer:
             return jsonify({'error': 'Customer profile not found'}), 404
         
         status = request.args.get('status')
         
-        query = Order.query.filter_by(customer_id=customer_id)
+        query = Order.query.filter_by(customerId=customer.customerId)
         if status:
             query = query.filter_by(status=status)
         
-        orders = query.order_by(Order.created_at.desc()).all()
+        orders = query.order_by(Order.orderDate.desc()).all()
         
         return jsonify({'orders': [order.to_dict() for order in orders]}), 200
         
@@ -82,10 +92,12 @@ def get_customer_orders():
 @jwt_required()
 def get_order_details(order_id):
     try:
-        current_user = get_jwt_identity()
-        customer_id = get_customer_id(current_user['id'])
+        customer = get_current_customer()
         
-        order = Order.query.filter_by(id=order_id, customer_id=customer_id).first()
+        if not customer:
+            return jsonify({'error': 'Customer profile not found'}), 404
+        
+        order = Order.query.filter_by(orderId=order_id, customerId=customer.customerId).first()
         if not order:
             return jsonify({'error': 'Order not found'}), 404
         
@@ -98,17 +110,19 @@ def get_order_details(order_id):
 @jwt_required()
 def cancel_order(order_id):
     try:
-        current_user = get_jwt_identity()
-        customer_id = get_customer_id(current_user['id'])
+        customer = get_current_customer()
         
-        order = Order.query.filter_by(id=order_id, customer_id=customer_id).first()
+        if not customer:
+            return jsonify({'error': 'Customer profile not found'}), 404
+        
+        order = Order.query.filter_by(orderId=order_id, customerId=customer.customerId).first()
         if not order:
             return jsonify({'error': 'Order not found'}), 404
         
-        if order.status not in ['pending', 'confirmed']:
+        if order.status not in ['Pending', 'Confirmed']:
             return jsonify({'error': 'Cannot cancel order at this stage'}), 400
         
-        order.status = 'cancelled'
+        order.status = 'Cancelled'
         db.session.commit()
         
         return jsonify({

@@ -2,31 +2,40 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app import db
 from models.user import Seller
-# routes/seller_routes.py
 from models.products import Product, Inventory
-
 from models.order import Order, OrderItem
 from sqlalchemy import func
 from datetime import datetime, timedelta
 
 seller_bp = Blueprint('seller', __name__)
 
-def get_seller_id(user_id):
-    seller = Seller.query.filter_by(user_id=user_id).first()
-    return seller.id if seller else None
+def get_current_seller():
+    """Helper function to get current seller from JWT token"""
+    try:
+        identity = get_jwt_identity()
+        user_type, user_id = identity.split(':')
+        user_id = int(user_id)
+        
+        if user_type != 'seller':
+            return None
+            
+        seller = Seller.query.get(user_id)
+        return seller
+    except Exception as e:
+        print(f"Error getting current seller: {e}")
+        return None
 
 # Product Management
 @seller_bp.route('/products', methods=['GET'])
 @jwt_required()
 def get_seller_products():
     try:
-        current_user = get_jwt_identity()
-        seller_id = get_seller_id(current_user['id'])
+        seller = get_current_seller()
         
-        if not seller_id:
+        if not seller:
             return jsonify({'error': 'Seller profile not found'}), 404
         
-        products = Product.query.filter_by(seller_id=seller_id).all()
+        products = Product.query.filter_by(sellerId=seller.sellerId).all()
         return jsonify({'products': [p.to_dict() for p in products]}), 200
         
     except Exception as e:
@@ -36,27 +45,35 @@ def get_seller_products():
 @jwt_required()
 def create_product():
     try:
-        current_user = get_jwt_identity()
-        seller_id = get_seller_id(current_user['id'])
+        seller = get_current_seller()
         
-        if not seller_id:
+        if not seller:
             return jsonify({'error': 'Seller profile not found'}), 404
         
         data = request.get_json()
         
         product = Product(
-            seller_id=seller_id,
-            name=data['name'],
+            sellerId=seller.sellerId,
+            productName=data['name'],
             description=data.get('description'),
             category=data.get('category'),
-            price=data['price'],
-            image_url=data.get('image_url'),
-            stock_quantity=data.get('stock_quantity', 0),
+            unitPrice=data['price'],
+            imageUrl=data.get('image_url'),
             preparation_time=data.get('preparation_time'),
-            is_available=data.get('is_available', True)
+            isAvailable=data.get('is_available', True)
         )
         
         db.session.add(product)
+        db.session.flush()  # Get the product ID
+        
+        # Create inventory record
+        inventory = Inventory(
+            productId=product.productId,
+            quantityInStock=data.get('stock_quantity', 0),
+            reorderLevel=data.get('reorder_level', 10)
+        )
+        
+        db.session.add(inventory)
         db.session.commit()
         
         return jsonify({
@@ -72,23 +89,35 @@ def create_product():
 @jwt_required()
 def update_product(product_id):
     try:
-        current_user = get_jwt_identity()
-        seller_id = get_seller_id(current_user['id'])
+        seller = get_current_seller()
         
-        product = Product.query.filter_by(id=product_id, seller_id=seller_id).first()
+        if not seller:
+            return jsonify({'error': 'Seller profile not found'}), 404
+        
+        product = Product.query.filter_by(productId=product_id, sellerId=seller.sellerId).first()
         if not product:
             return jsonify({'error': 'Product not found'}), 404
         
         data = request.get_json()
         
-        product.name = data.get('name', product.name)
+        product.productName = data.get('name', product.productName)
         product.description = data.get('description', product.description)
         product.category = data.get('category', product.category)
-        product.price = data.get('price', product.price)
-        product.image_url = data.get('image_url', product.image_url)
-        product.stock_quantity = data.get('stock_quantity', product.stock_quantity)
+        product.unitPrice = data.get('price', product.unitPrice)
+        product.imageUrl = data.get('image_url', product.imageUrl)
         product.preparation_time = data.get('preparation_time', product.preparation_time)
-        product.is_available = data.get('is_available', product.is_available)
+        product.isAvailable = data.get('is_available', product.isAvailable)
+        
+        # Update inventory if stock_quantity provided
+        if 'stock_quantity' in data:
+            if product.inventory:
+                product.inventory.quantityInStock = data['stock_quantity']
+            else:
+                inventory = Inventory(
+                    productId=product.productId,
+                    quantityInStock=data['stock_quantity']
+                )
+                db.session.add(inventory)
         
         db.session.commit()
         
@@ -105,10 +134,12 @@ def update_product(product_id):
 @jwt_required()
 def delete_product(product_id):
     try:
-        current_user = get_jwt_identity()
-        seller_id = get_seller_id(current_user['id'])
+        seller = get_current_seller()
         
-        product = Product.query.filter_by(id=product_id, seller_id=seller_id).first()
+        if not seller:
+            return jsonify({'error': 'Seller profile not found'}), 404
+        
+        product = Product.query.filter_by(productId=product_id, sellerId=seller.sellerId).first()
         if not product:
             return jsonify({'error': 'Product not found'}), 404
         
@@ -126,28 +157,30 @@ def delete_product(product_id):
 @jwt_required()
 def update_inventory(product_id):
     try:
-        current_user = get_jwt_identity()
-        seller_id = get_seller_id(current_user['id'])
+        seller = get_current_seller()
         
-        product = Product.query.filter_by(id=product_id, seller_id=seller_id).first()
+        if not seller:
+            return jsonify({'error': 'Seller profile not found'}), 404
+        
+        product = Product.query.filter_by(productId=product_id, sellerId=seller.sellerId).first()
         if not product:
             return jsonify({'error': 'Product not found'}), 404
         
         data = request.get_json()
         quantity_change = data.get('quantity_change', 0)
         
-        # Update product stock
-        product.stock_quantity += quantity_change
+        # Update inventory
+        if product.inventory:
+            product.inventory.quantityInStock += quantity_change
+            product.inventory.lastRestocked = datetime.utcnow()
+        else:
+            inventory = Inventory(
+                productId=product_id,
+                quantityInStock=quantity_change,
+                lastRestocked=datetime.utcnow()
+            )
+            db.session.add(inventory)
         
-        # Log inventory change
-        inventory_log = Inventory(
-            product_id=product_id,
-            quantity_change=quantity_change,
-            reason=data.get('reason', 'adjustment'),
-            notes=data.get('notes')
-        )
-        
-        db.session.add(inventory_log)
         db.session.commit()
         
         return jsonify({
@@ -163,18 +196,24 @@ def update_inventory(product_id):
 @jwt_required()
 def get_inventory_logs():
     try:
-        current_user = get_jwt_identity()
-        seller_id = get_seller_id(current_user['id'])
+        seller = get_current_seller()
+        
+        if not seller:
+            return jsonify({'error': 'Seller profile not found'}), 404
         
         # Get all products for this seller
-        products = Product.query.filter_by(seller_id=seller_id).all()
-        product_ids = [p.id for p in products]
+        products = Product.query.filter_by(sellerId=seller.sellerId).all()
         
-        # Get inventory logs
-        logs = Inventory.query.filter(Inventory.product_id.in_(product_ids))\
-            .order_by(Inventory.created_at.desc()).all()
-        
-        return jsonify({'logs': [log.to_dict() for log in logs]}), 200
+        return jsonify({
+            'logs': [
+                {
+                    'productId': p.productId,
+                    'productName': p.productName,
+                    'quantityInStock': p.inventory.quantityInStock if p.inventory else 0,
+                    'lastRestocked': p.inventory.lastRestocked.isoformat() if p.inventory and p.inventory.lastRestocked else None
+                } for p in products
+            ]
+        }), 200
         
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -184,16 +223,24 @@ def get_inventory_logs():
 @jwt_required()
 def get_seller_orders():
     try:
-        current_user = get_jwt_identity()
-        seller_id = get_seller_id(current_user['id'])
+        seller = get_current_seller()
+        
+        if not seller:
+            return jsonify({'error': 'Seller profile not found'}), 404
         
         status = request.args.get('status')
+        limit = request.args.get('limit', type=int)
         
-        query = Order.query.filter_by(seller_id=seller_id)
+        query = Order.query.filter_by(sellerId=seller.sellerId)
         if status:
             query = query.filter_by(status=status)
         
-        orders = query.order_by(Order.created_at.desc()).all()
+        query = query.order_by(Order.orderDate.desc())
+        
+        if limit:
+            query = query.limit(limit)
+        
+        orders = query.all()
         
         return jsonify({'orders': [order.to_dict() for order in orders]}), 200
         
@@ -204,17 +251,20 @@ def get_seller_orders():
 @jwt_required()
 def update_order_status(order_id):
     try:
-        current_user = get_jwt_identity()
-        seller_id = get_seller_id(current_user['id'])
+        seller = get_current_seller()
         
-        order = Order.query.filter_by(id=order_id, seller_id=seller_id).first()
+        if not seller:
+            return jsonify({'error': 'Seller profile not found'}), 404
+        
+        order = Order.query.filter_by(orderId=order_id, sellerId=seller.sellerId).first()
         if not order:
             return jsonify({'error': 'Order not found'}), 404
         
         data = request.get_json()
         new_status = data.get('status')
         
-        if new_status not in ['pending', 'confirmed', 'preparing', 'ready', 'completed', 'cancelled']:
+        valid_statuses = ['Pending', 'Confirmed', 'Preparing', 'Ready', 'Delivered', 'Completed', 'Cancelled']
+        if new_status not in valid_statuses:
             return jsonify({'error': 'Invalid status'}), 400
         
         order.status = new_status
@@ -234,8 +284,10 @@ def update_order_status(order_id):
 @jwt_required()
 def get_revenue():
     try:
-        current_user = get_jwt_identity()
-        seller_id = get_seller_id(current_user['id'])
+        seller = get_current_seller()
+        
+        if not seller:
+            return jsonify({'error': 'Seller profile not found'}), 404
         
         period = request.args.get('period', 'month')  # day, week, month, year
         
@@ -252,32 +304,30 @@ def get_revenue():
         
         # Get completed orders
         orders = Order.query.filter(
-            Order.seller_id == seller_id,
-            Order.status == 'completed',
-            Order.payment_status == 'paid',
-            Order.created_at >= start_date
+            Order.sellerId == seller.sellerId,
+            Order.status.in_(['Delivered', 'Completed']),
+            Order.orderDate >= start_date
         ).all()
         
-        total_revenue = sum(order.total_amount for order in orders)
+        total_revenue = sum(order.totalAmount for order in orders)
         total_orders = len(orders)
         
         # Calculate revenue by day
         revenue_by_day = db.session.query(
-            func.date(Order.created_at).label('date'),
-            func.sum(Order.total_amount).label('revenue'),
-            func.count(Order.id).label('orders')
+            func.date(Order.orderDate).label('date'),
+            func.sum(Order.totalAmount).label('revenue'),
+            func.count(Order.orderId).label('orders')
         ).filter(
-            Order.seller_id == seller_id,
-            Order.status == 'completed',
-            Order.payment_status == 'paid',
-            Order.created_at >= start_date
-        ).group_by(func.date(Order.created_at)).all()
+            Order.sellerId == seller.sellerId,
+            Order.status.in_(['Delivered', 'Completed']),
+            Order.orderDate >= start_date
+        ).group_by(func.date(Order.orderDate)).all()
         
         return jsonify({
             'period': period,
-            'total_revenue': total_revenue,
+            'total_revenue': float(total_revenue) if total_revenue else 0,
             'total_orders': total_orders,
-            'average_order_value': total_revenue / total_orders if total_orders > 0 else 0,
+            'average_order_value': float(total_revenue / total_orders) if total_orders > 0 else 0,
             'revenue_by_day': [
                 {
                     'date': str(day.date),
@@ -294,34 +344,41 @@ def get_revenue():
 @jwt_required()
 def get_analytics():
     try:
-        current_user = get_jwt_identity()
-        seller_id = get_seller_id(current_user['id'])
+        seller = get_current_seller()
+        
+        if not seller:
+            return jsonify({'error': 'Seller profile not found'}), 404
         
         # Top selling products
         top_products = db.session.query(
-            Product.id,
-            Product.name,
+            Product.productId,
+            Product.productName,
             func.sum(OrderItem.quantity).label('total_sold'),
             func.sum(OrderItem.subtotal).label('total_revenue')
-        ).join(OrderItem).join(Order).filter(
-            Product.seller_id == seller_id,
-            Order.status == 'completed'
-        ).group_by(Product.id, Product.name)\
+        ).join(OrderItem, Product.productId == OrderItem.productId)\
+         .join(Order, OrderItem.orderId == Order.orderId)\
+         .filter(
+            Product.sellerId == seller.sellerId,
+            Order.status.in_(['Delivered', 'Completed'])
+        ).group_by(Product.productId, Product.productName)\
          .order_by(func.sum(OrderItem.quantity).desc())\
          .limit(10).all()
         
         # Order statistics
-        total_orders = Order.query.filter_by(seller_id=seller_id).count()
-        pending_orders = Order.query.filter_by(seller_id=seller_id, status='pending').count()
-        completed_orders = Order.query.filter_by(seller_id=seller_id, status='completed').count()
+        total_orders = Order.query.filter_by(sellerId=seller.sellerId).count()
+        pending_orders = Order.query.filter_by(sellerId=seller.sellerId, status='Pending').count()
+        completed_orders = Order.query.filter(
+            Order.sellerId == seller.sellerId,
+            Order.status.in_(['Delivered', 'Completed'])
+        ).count()
         
         return jsonify({
             'top_products': [
                 {
-                    'id': p.id,
-                    'name': p.name,
-                    'total_sold': p.total_sold,
-                    'total_revenue': float(p.total_revenue)
+                    'id': p.productId,
+                    'name': p.productName,
+                    'total_sold': int(p.total_sold) if p.total_sold else 0,
+                    'total_revenue': float(p.total_revenue) if p.total_revenue else 0
                 } for p in top_products
             ],
             'order_stats': {
