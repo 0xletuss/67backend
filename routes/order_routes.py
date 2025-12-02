@@ -26,10 +26,18 @@ def parse_jwt_identity():
 
 # ==================== CUSTOMER ORDER ROUTES ====================
 
-@order_bp.route('/create', methods=['POST'])
-@jwt_required()
+@order_bp.route('/create', methods=['POST', 'OPTIONS'])
+@jwt_required(optional=True)
 def create_order():
     """Create a new order (customer only)"""
+    # Handle preflight OPTIONS request
+    if request.method == 'OPTIONS':
+        response = jsonify({'status': 'ok'})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+        response.headers.add('Access-Control-Allow-Methods', 'POST,OPTIONS')
+        return response, 200
+    
     try:
         # Parse JWT identity
         current_user = parse_jwt_identity()
@@ -79,7 +87,7 @@ def create_order():
         # Create order
         order = Order(
             customerId=current_user['id'],
-            sellerId=seller_id,  # Added sellerId
+            sellerId=seller_id,
             type=data.get('type', 'Delivery'),
             deliveryAddress=data.get('deliveryAddress'),
             notes=data.get('notes'),
@@ -153,10 +161,12 @@ def create_order():
         print("Order saved successfully!")
         print("=" * 50)
         
-        return jsonify({
+        response = jsonify({
             'message': 'Order created successfully',
             'order': order.to_dict()
-        }), 201
+        })
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 201
         
     except ValueError as e:
         return jsonify({'error': 'Invalid token format. Please login again.'}), 401
@@ -266,10 +276,18 @@ def cancel_order(order_id):
 
 # ==================== PAYMENT ROUTES ====================
 
-@order_bp.route('/<int:order_id>/payment', methods=['POST'])
-@jwt_required()
+@order_bp.route('/<int:order_id>/payment', methods=['POST', 'OPTIONS'])
+@jwt_required(optional=True)
 def create_payment(order_id):
     """Create payment for an order"""
+    # Handle preflight OPTIONS request
+    if request.method == 'OPTIONS':
+        response = jsonify({'status': 'ok'})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+        response.headers.add('Access-Control-Allow-Methods', 'POST,OPTIONS')
+        return response, 200
+    
     try:
         current_user = parse_jwt_identity()
         
@@ -309,11 +327,13 @@ def create_payment(order_id):
         
         db.session.commit()
         
-        return jsonify({
+        response = jsonify({
             'message': 'Payment successful',
             'payment': payment.to_dict(),
             'order': order.to_dict()
-        }), 201
+        })
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 201
         
     except ValueError:
         return jsonify({'error': 'Invalid token format. Please login again.'}), 401
@@ -350,10 +370,18 @@ def get_payment(order_id):
 
 # ==================== RESERVATION ROUTES ====================
 
-@order_bp.route('/reservations/create', methods=['POST'])
-@jwt_required()
+@order_bp.route('/reservations/create', methods=['POST', 'OPTIONS'])
+@jwt_required(optional=True)
 def create_reservation():
     """Create a new reservation (customer only)"""
+    # Handle preflight OPTIONS request
+    if request.method == 'OPTIONS':
+        response = jsonify({'status': 'ok'})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+        response.headers.add('Access-Control-Allow-Methods', 'POST,OPTIONS')
+        return response, 200
+    
     try:
         current_user = parse_jwt_identity()
         
@@ -362,6 +390,12 @@ def create_reservation():
         
         data = request.get_json()
         
+        print("=" * 50)
+        print("CREATE RESERVATION REQUEST")
+        print("User:", current_user)
+        print("Reservation data:", data)
+        print("=" * 50)
+        
         # Validate required fields
         required_fields = ['reservationDate', 'numberOfPeople']
         for field in required_fields:
@@ -369,7 +403,11 @@ def create_reservation():
                 return jsonify({'error': f'{field} is required'}), 400
         
         # Parse reservation date
-        reservation_date = datetime.fromisoformat(data['reservationDate'].replace('Z', '+00:00'))
+        try:
+            reservation_date = datetime.fromisoformat(data['reservationDate'].replace('Z', '+00:00'))
+        except Exception as date_error:
+            print(f"Date parsing error: {date_error}")
+            return jsonify({'error': 'Invalid date format'}), 400
         
         # Create reservation
         reservation = Reservation(
@@ -382,15 +420,24 @@ def create_reservation():
         db.session.add(reservation)
         db.session.commit()
         
-        return jsonify({
+        print(f"Reservation created with ID: {reservation.reservationId}")
+        print("=" * 50)
+        
+        response = jsonify({
             'message': 'Reservation created successfully',
             'reservation': reservation.to_dict()
-        }), 201
+        })
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 201
         
-    except ValueError:
+    except ValueError as e:
+        print(f"ValueError: {e}")
         return jsonify({'error': 'Invalid token format. Please login again.'}), 401
     except Exception as e:
         db.session.rollback()
+        print(f"Error creating reservation: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 
