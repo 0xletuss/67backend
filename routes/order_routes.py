@@ -9,6 +9,21 @@ import uuid
 
 order_bp = Blueprint('order', __name__)
 
+# Helper function to parse JWT identity
+def parse_jwt_identity():
+    """Parse JWT identity from 'type:id' format"""
+    identity = get_jwt_identity()
+    
+    if ':' in identity:
+        user_type, user_id = identity.split(':')
+        return {
+            'id': int(user_id),
+            'type': user_type
+        }
+    else:
+        # Fallback for unexpected format
+        raise ValueError('Invalid token format')
+
 # ==================== CUSTOMER ORDER ROUTES ====================
 
 @order_bp.route('/create', methods=['POST'])
@@ -16,36 +31,12 @@ order_bp = Blueprint('order', __name__)
 def create_order():
     """Create a new order (customer only)"""
     try:
-        # FIXED: Handle JWT identity correctly
-        current_user_identity = get_jwt_identity()
+        # Parse JWT identity
+        current_user = parse_jwt_identity()
         
         print("=" * 50)
-        print("JWT IDENTITY DEBUG")
-        print("Raw identity:", current_user_identity)
-        print("Identity type:", type(current_user_identity))
-        print("=" * 50)
-        
-        # Parse JWT identity if it's a string (JSON string)
-        if isinstance(current_user_identity, str):
-            import json
-            try:
-                current_user = json.loads(current_user_identity)
-                print("Parsed JWT from string to dict")
-            except json.JSONDecodeError:
-                # If it's just a user ID string
-                print("JWT is a simple string ID, fetching user from database")
-                from models.user import Customer
-                customer = Customer.query.get(int(current_user_identity))
-                if not customer:
-                    return jsonify({'error': 'User not found'}), 404
-                current_user = {
-                    'id': customer.customerId,
-                    'type': 'customer'
-                }
-        else:
-            current_user = current_user_identity
-        
-        print("Final current_user:", current_user)
+        print("CREATE ORDER REQUEST")
+        print("User:", current_user)
         print("=" * 50)
         
         if current_user['type'] != 'customer':
@@ -54,10 +45,7 @@ def create_order():
         # Get JSON data
         data = request.get_json(force=True)
         
-        # Debug logging
-        print("RECEIVED ORDER REQUEST")
         print("Order data:", data)
-        print("Data type:", type(data))
         print("=" * 50)
         
         # Validate required fields
@@ -66,13 +54,10 @@ def create_order():
         
         # Check if items is a list
         if not isinstance(data['items'], list):
-            print(f"ERROR: items is {type(data['items'])}, not list")
             return jsonify({'error': 'Items must be a list'}), 400
         
         # Validate each item structure
         for idx, item in enumerate(data['items']):
-            print(f"Validating item {idx}:", item, "Type:", type(item))
-            
             if not isinstance(item, dict):
                 return jsonify({'error': f'Item {idx} is not a valid object'}), 400
             
@@ -101,8 +86,6 @@ def create_order():
         # Add order items and calculate total
         total_amount = 0
         for idx, item in enumerate(data['items']):
-            print(f"Processing item {idx} for order...")
-            
             product_id = item['productId']
             quantity = item['quantity']
             
@@ -135,7 +118,7 @@ def create_order():
             db.session.add(order_item)
             total_amount += subtotal
             
-            print(f"Item {idx} added: {product.productName} x{quantity} = ₱{subtotal}")
+            print(f"Item {idx}: {product.productName} x{quantity} = ₱{subtotal}")
             
             # Update inventory
             if product.inventory:
@@ -159,7 +142,7 @@ def create_order():
             print("Delivery record created")
         
         db.session.commit()
-        print("Order saved to database successfully")
+        print("Order saved successfully!")
         print("=" * 50)
         
         return jsonify({
@@ -167,31 +150,22 @@ def create_order():
             'order': order.to_dict()
         }), 201
         
-    except KeyError as e:
-        db.session.rollback()
-        print(f"KeyError: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': f'Missing required field: {str(e)}'}), 400
-    except TypeError as e:
-        db.session.rollback()
-        print(f"TypeError: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': f'Invalid data type in request: {str(e)}'}), 400
+    except ValueError as e:
+        return jsonify({'error': 'Invalid token format. Please login again.'}), 401
     except Exception as e:
         db.session.rollback()
-        print(f"Exception: {str(e)}")
+        print(f"Error: {str(e)}")
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
-    
+
+
 @order_bp.route('/my-orders', methods=['GET'])
 @jwt_required()
 def get_my_orders():
     """Get all orders for logged-in customer"""
     try:
-        current_user = get_jwt_identity()
+        current_user = parse_jwt_identity()
         
         if current_user['type'] != 'customer':
             return jsonify({'error': 'Only customers can view their orders'}), 403
@@ -210,6 +184,8 @@ def get_my_orders():
             'count': len(orders)
         }), 200
         
+    except ValueError:
+        return jsonify({'error': 'Invalid token format. Please login again.'}), 401
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -219,7 +195,7 @@ def get_my_orders():
 def get_order(order_id):
     """Get single order details"""
     try:
-        current_user = get_jwt_identity()
+        current_user = parse_jwt_identity()
         
         order = Order.query.get(order_id)
         
@@ -232,6 +208,8 @@ def get_order(order_id):
         
         return jsonify({'order': order.to_dict()}), 200
         
+    except ValueError:
+        return jsonify({'error': 'Invalid token format. Please login again.'}), 401
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -241,7 +219,7 @@ def get_order(order_id):
 def cancel_order(order_id):
     """Cancel an order (customer only)"""
     try:
-        current_user = get_jwt_identity()
+        current_user = parse_jwt_identity()
         
         if current_user['type'] != 'customer':
             return jsonify({'error': 'Only customers can cancel orders'}), 403
@@ -271,6 +249,8 @@ def cancel_order(order_id):
             'order': order.to_dict()
         }), 200
         
+    except ValueError:
+        return jsonify({'error': 'Invalid token format. Please login again.'}), 401
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
@@ -283,7 +263,7 @@ def cancel_order(order_id):
 def create_payment(order_id):
     """Create payment for an order"""
     try:
-        current_user = get_jwt_identity()
+        current_user = parse_jwt_identity()
         
         if current_user['type'] != 'customer':
             return jsonify({'error': 'Only customers can make payments'}), 403
@@ -327,6 +307,8 @@ def create_payment(order_id):
             'order': order.to_dict()
         }), 201
         
+    except ValueError:
+        return jsonify({'error': 'Invalid token format. Please login again.'}), 401
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
@@ -337,7 +319,7 @@ def create_payment(order_id):
 def get_payment(order_id):
     """Get payment details for an order"""
     try:
-        current_user = get_jwt_identity()
+        current_user = parse_jwt_identity()
         
         order = Order.query.get(order_id)
         
@@ -352,6 +334,8 @@ def get_payment(order_id):
         
         return jsonify({'payment': order.payment.to_dict()}), 200
         
+    except ValueError:
+        return jsonify({'error': 'Invalid token format. Please login again.'}), 401
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -363,7 +347,7 @@ def get_payment(order_id):
 def create_reservation():
     """Create a new reservation (customer only)"""
     try:
-        current_user = get_jwt_identity()
+        current_user = parse_jwt_identity()
         
         if current_user['type'] != 'customer':
             return jsonify({'error': 'Only customers can create reservations'}), 403
@@ -395,6 +379,8 @@ def create_reservation():
             'reservation': reservation.to_dict()
         }), 201
         
+    except ValueError:
+        return jsonify({'error': 'Invalid token format. Please login again.'}), 401
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
@@ -405,7 +391,7 @@ def create_reservation():
 def get_my_reservations():
     """Get all reservations for logged-in customer"""
     try:
-        current_user = get_jwt_identity()
+        current_user = parse_jwt_identity()
         
         if current_user['type'] != 'customer':
             return jsonify({'error': 'Only customers can view their reservations'}), 403
@@ -419,6 +405,8 @@ def get_my_reservations():
             'count': len(reservations)
         }), 200
         
+    except ValueError:
+        return jsonify({'error': 'Invalid token format. Please login again.'}), 401
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -428,7 +416,7 @@ def get_my_reservations():
 def cancel_reservation(reservation_id):
     """Cancel a reservation"""
     try:
-        current_user = get_jwt_identity()
+        current_user = parse_jwt_identity()
         
         if current_user['type'] != 'customer':
             return jsonify({'error': 'Only customers can cancel reservations'}), 403
@@ -449,6 +437,8 @@ def cancel_reservation(reservation_id):
             'reservation': reservation.to_dict()
         }), 200
         
+    except ValueError:
+        return jsonify({'error': 'Invalid token format. Please login again.'}), 401
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
