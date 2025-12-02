@@ -145,19 +145,28 @@ def create_product():
         if not data.get('unitPrice'):
             return jsonify({'error': 'Unit price is required'}), 400
         
-        # Get imageUrl from request
+        # CRITICAL FIX: Get imageUrl and ensure it's not empty string
         image_url = data.get('imageUrl')
+        if image_url == '':
+            image_url = None
+        
         print(f"Image URL from request: {image_url}")
+        
+        # CRITICAL FIX: Convert isAvailable to proper boolean/int
+        is_available = data.get('isAvailable')
+        if isinstance(is_available, str):
+            is_available = is_available.lower() in ['true', '1', 'yes']
+        is_available = 1 if is_available else 0
         
         # Create product with exact database field names
         product = Product(
             sellerId=seller.sellerId,
             productName=data['productName'],
-            description=data.get('description'),
-            category=data.get('category'),
+            description=data.get('description') if data.get('description') else None,
+            category=data.get('category') if data.get('category') else None,
             unitPrice=float(data['unitPrice']),
-            imageUrl=image_url,  # This should be the Cloudinary URL
-            isAvailable=bool(data.get('isAvailable', True))
+            imageUrl=image_url,  # This will be None if empty or the Cloudinary URL
+            isAvailable=is_available
         )
         
         db.session.add(product)
@@ -205,23 +214,42 @@ def update_product(product_id):
         
         data = request.get_json()
         
+        print(f"Updating product {product_id} with data: {data}")
+        
         # Update with exact database field names
         if 'productName' in data:
             product.productName = data['productName']
+        
         if 'description' in data:
-            product.description = data['description']
+            product.description = data['description'] if data['description'] else None
+        
         if 'category' in data:
-            product.category = data['category']
+            product.category = data['category'] if data['category'] else None
+        
         if 'unitPrice' in data:
             product.unitPrice = float(data['unitPrice'])
+        
+        # CRITICAL FIX: Handle imageUrl properly - don't set empty strings
         if 'imageUrl' in data:
-            product.imageUrl = data['imageUrl']
+            image_url = data['imageUrl']
+            if image_url == '':
+                # Keep existing imageUrl if new value is empty
+                pass
+            else:
+                product.imageUrl = image_url
+        
+        # CRITICAL FIX: Handle isAvailable properly
         if 'isAvailable' in data:
-            product.isAvailable = bool(data['isAvailable'])
+            is_available = data['isAvailable']
+            if isinstance(is_available, str):
+                is_available = is_available.lower() in ['true', '1', 'yes']
+            product.isAvailable = 1 if is_available else 0
         
         product.updatedAt = datetime.utcnow()
         
         db.session.commit()
+        
+        print(f"Product updated successfully: {product.to_dict()}")
         
         return jsonify({
             'message': 'Product updated successfully',
@@ -231,6 +259,8 @@ def update_product(product_id):
     except Exception as e:
         db.session.rollback()
         print(f"Error in update_product: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 @seller_bp.route('/products/<int:product_id>', methods=['DELETE'])
@@ -250,9 +280,17 @@ def delete_product(product_id):
         if product.imageUrl:
             try:
                 # Extract public_id from URL
-                public_id = product.imageUrl.split('/')[-1].split('.')[0]
-                cloudinary.uploader.destroy(f"products/seller_{seller.sellerId}/{public_id}")
-            except:
+                # Example URL: https://res.cloudinary.com/xxx/image/upload/v123/products/seller_1/abc.jpg
+                url_parts = product.imageUrl.split('/')
+                if 'cloudinary.com' in product.imageUrl:
+                    # Get the path after 'upload/'
+                    upload_index = url_parts.index('upload')
+                    public_id_parts = url_parts[upload_index + 2:]  # Skip version
+                    public_id = '/'.join(public_id_parts).rsplit('.', 1)[0]  # Remove extension
+                    cloudinary.uploader.destroy(public_id)
+                    print(f"Deleted image from Cloudinary: {public_id}")
+            except Exception as cloudinary_error:
+                print(f"Error deleting from Cloudinary: {cloudinary_error}")
                 pass  # Ignore cloudinary deletion errors
         
         db.session.delete(product)
