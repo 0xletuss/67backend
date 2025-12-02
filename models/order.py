@@ -72,8 +72,7 @@ class OrderItem(db.Model):
     quantity = db.Column(db.Integer, nullable=False)
     subtotal = db.Column(db.Numeric(10, 2), nullable=False)
     
-    # ✅ ADD THIS LINE - Define relationship to Product
-    product = db.relationship('Product', backref='order_items', lazy=True)
+   
     
     def to_dict(self):
         try:
