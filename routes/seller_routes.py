@@ -65,35 +65,47 @@ def upload_image():
         if not seller:
             return jsonify({'error': 'Seller profile not found'}), 404
         
+        print(f"Upload request from seller ID: {seller.sellerId}")
+        print(f"Files in request: {request.files}")
+        
         # Check if file is in request
         if 'image' not in request.files:
+            print("ERROR: No image file in request")
             return jsonify({'error': 'No image file provided'}), 400
         
         file = request.files['image']
+        print(f"File received: {file.filename}")
         
         # Check if file is selected
         if file.filename == '':
+            print("ERROR: Empty filename")
             return jsonify({'error': 'No file selected'}), 400
         
         # Check file extension
         if not allowed_file(file.filename):
+            print(f"ERROR: Invalid file type: {file.filename}")
             return jsonify({'error': 'Invalid file type. Allowed: png, jpg, jpeg, gif, webp'}), 400
         
         # Upload to Cloudinary
         try:
+            print("Uploading to Cloudinary...")
             image_url = upload_to_cloudinary(file, folder=f"products/seller_{seller.sellerId}")
+            print(f"SUCCESS: Image uploaded to: {image_url}")
             
             return jsonify({
                 'message': 'Image uploaded successfully',
-                'imageUrl': image_url
+                'imageUrl': image_url,
+                'success': True
             }), 200
             
         except Exception as upload_error:
             print(f"Cloudinary upload error: {upload_error}")
-            return jsonify({'error': 'Failed to upload image to cloud storage'}), 500
+            return jsonify({'error': f'Failed to upload image: {str(upload_error)}'}), 500
         
     except Exception as e:
         print(f"Error in upload_image: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 # Product Management
@@ -124,12 +136,18 @@ def create_product():
         
         data = request.get_json()
         
+        print(f"Creating product with data: {data}")
+        
         # Validate required fields
         if not data.get('productName'):
             return jsonify({'error': 'Product name is required'}), 400
         
         if not data.get('unitPrice'):
             return jsonify({'error': 'Unit price is required'}), 400
+        
+        # Get imageUrl from request
+        image_url = data.get('imageUrl')
+        print(f"Image URL from request: {image_url}")
         
         # Create product with exact database field names
         product = Product(
@@ -138,12 +156,14 @@ def create_product():
             description=data.get('description'),
             category=data.get('category'),
             unitPrice=float(data['unitPrice']),
-            imageUrl=data.get('imageUrl'),
+            imageUrl=image_url,  # This should be the Cloudinary URL
             isAvailable=bool(data.get('isAvailable', True))
         )
         
         db.session.add(product)
         db.session.flush()  # Get the product ID
+        
+        print(f"Product created with ID: {product.productId}, imageUrl: {product.imageUrl}")
         
         # Create inventory record with default stock
         inventory = Inventory(
@@ -155,14 +175,19 @@ def create_product():
         db.session.add(inventory)
         db.session.commit()
         
+        print(f"Product saved successfully: {product.to_dict()}")
+        
         return jsonify({
             'message': 'Product created successfully',
-            'product': product.to_dict()
+            'product': product.to_dict(),
+            'success': True
         }), 201
         
     except Exception as e:
         db.session.rollback()
         print(f"Error in create_product: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 @seller_bp.route('/products/<int:product_id>', methods=['PUT'])
