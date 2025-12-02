@@ -546,3 +546,143 @@ def cancel_reservation(reservation_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
+
+# ==================== SELLER RESERVATION ROUTES ====================
+# Add these routes to your order_bp in order.py
+
+@order_bp.route('/reservations/all', methods=['GET'])
+@jwt_required()
+def get_all_reservations():
+    """Get all reservations for seller (admin view)"""
+    try:
+        current_user = parse_jwt_identity()
+        
+        # Only sellers can view all reservations
+        if current_user['type'] != 'seller':
+            return jsonify({'error': 'Only sellers can view all reservations'}), 403
+        
+        # Get status filter if provided
+        status = request.args.get('status')
+        
+        # Query all reservations (sellers see all customer reservations)
+        query = Reservation.query
+        
+        if status:
+            query = query.filter_by(status=status)
+        
+        reservations = query.order_by(Reservation.reservationDate.desc()).all()
+        
+        # Enrich with customer information
+        result = []
+        for reservation in reservations:
+            res_dict = reservation.to_dict()
+            
+            # Add customer name if available
+            if reservation.customer:
+                res_dict['customerName'] = reservation.customer.name
+                res_dict['customer_name'] = reservation.customer.name
+                if hasattr(reservation.customer, 'email'):
+                    res_dict['customerEmail'] = reservation.customer.email
+                    res_dict['customer_email'] = reservation.customer.email
+                if hasattr(reservation.customer, 'phone'):
+                    res_dict['customerPhone'] = reservation.customer.phone
+                    res_dict['customer_phone'] = reservation.customer.phone
+            
+            result.append(res_dict)
+        
+        return jsonify({
+            'reservations': result,
+            'count': len(result)
+        }), 200
+        
+    except ValueError:
+        return jsonify({'error': 'Invalid token format. Please login again.'}), 401
+    except Exception as e:
+        print(f"Error fetching reservations: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@order_bp.route('/reservations/<int:reservation_id>', methods=['GET'])
+@jwt_required()
+def get_reservation_details(reservation_id):
+    """Get single reservation details"""
+    try:
+        current_user = parse_jwt_identity()
+        
+        reservation = Reservation.query.get(reservation_id)
+        
+        if not reservation:
+            return jsonify({'error': 'Reservation not found'}), 404
+        
+        # Check permissions
+        if current_user['type'] == 'customer' and reservation.customerId != current_user['id']:
+            return jsonify({'error': 'You can only view your own reservations'}), 403
+        
+        if current_user['type'] != 'customer' and current_user['type'] != 'seller':
+            return jsonify({'error': 'Unauthorized'}), 403
+        
+        # Get reservation details
+        res_dict = reservation.to_dict()
+        
+        # Add customer information for sellers
+        if current_user['type'] == 'seller' and reservation.customer:
+            res_dict['customerName'] = reservation.customer.name
+            res_dict['customer_name'] = reservation.customer.name
+            if hasattr(reservation.customer, 'email'):
+                res_dict['customerEmail'] = reservation.customer.email
+                res_dict['customer_email'] = reservation.customer.email
+            if hasattr(reservation.customer, 'phone'):
+                res_dict['customerPhone'] = reservation.customer.phone
+                res_dict['customer_phone'] = reservation.customer.phone
+        
+        return jsonify(res_dict), 200
+        
+    except ValueError:
+        return jsonify({'error': 'Invalid token format. Please login again.'}), 401
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@order_bp.route('/reservations/<int:reservation_id>/update-status', methods=['PUT'])
+@jwt_required()
+def update_reservation_status(reservation_id):
+    """Update reservation status (seller only)"""
+    try:
+        current_user = parse_jwt_identity()
+        
+        # Only sellers can update reservation status
+        if current_user['type'] != 'seller':
+            return jsonify({'error': 'Only sellers can update reservation status'}), 403
+        
+        reservation = Reservation.query.get(reservation_id)
+        
+        if not reservation:
+            return jsonify({'error': 'Reservation not found'}), 404
+        
+        data = request.get_json()
+        
+        if 'status' not in data:
+            return jsonify({'error': 'Status is required'}), 400
+        
+        new_status = data['status']
+        
+        # Validate status
+        valid_statuses = ['Pending', 'Confirmed', 'Completed', 'Cancelled', 'No-show']
+        if new_status not in valid_statuses:
+            return jsonify({'error': f'Invalid status. Must be one of: {", ".join(valid_statuses)}'}), 400
+        
+        reservation.status = new_status
+        db.session.commit()
+        
+        return jsonify({
+            'message': 'Reservation status updated successfully',
+            'reservation': reservation.to_dict()
+        }), 200
+        
+    except ValueError:
+        return jsonify({'error': 'Invalid token format. Please login again.'}), 401
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
