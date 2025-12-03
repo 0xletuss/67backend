@@ -104,7 +104,91 @@ def toggle_seller_active(seller_id):
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
-# Seller Verification
+# ==================== PASSWORD MANAGEMENT ====================
+
+@admin_bp.route('/sellers/<int:seller_id>/change-password', methods=['PUT'])
+@jwt_required()
+def change_seller_password(seller_id):
+    """Admin can change seller password"""
+    try:
+        admin = get_current_admin()
+        if not admin:
+            return jsonify({'error': 'Unauthorized'}), 403
+        
+        data = request.get_json()
+        
+        # Validate required field
+        if 'new_password' not in data:
+            return jsonify({'error': 'new_password is required'}), 400
+        
+        # Validate password length
+        if len(data['new_password']) < 6:
+            return jsonify({'error': 'Password must be at least 6 characters'}), 400
+        
+        seller = Seller.query.get(seller_id)
+        if not seller:
+            return jsonify({'error': 'Seller not found'}), 404
+        
+        # Update password
+        seller.set_password(data['new_password'])
+        db.session.commit()
+        
+        return jsonify({
+            'message': 'Seller password changed successfully',
+            'seller': {
+                'sellerId': seller.sellerId,
+                'username': seller.username,
+                'email': seller.email,
+                'storeName': seller.storeName
+            }
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@admin_bp.route('/customers/<int:customer_id>/change-password', methods=['PUT'])
+@jwt_required()
+def change_customer_password(customer_id):
+    """Admin can change customer password"""
+    try:
+        admin = get_current_admin()
+        if not admin:
+            return jsonify({'error': 'Unauthorized'}), 403
+        
+        data = request.get_json()
+        
+        # Validate required field
+        if 'new_password' not in data:
+            return jsonify({'error': 'new_password is required'}), 400
+        
+        # Validate password length
+        if len(data['new_password']) < 6:
+            return jsonify({'error': 'Password must be at least 6 characters'}), 400
+        
+        customer = Customer.query.get(customer_id)
+        if not customer:
+            return jsonify({'error': 'Customer not found'}), 404
+        
+        # Update password
+        customer.set_password(data['new_password'])
+        db.session.commit()
+        
+        return jsonify({
+            'message': 'Customer password changed successfully',
+            'customer': {
+                'customerId': customer.customerId,
+                'customerName': customer.customerName,
+                'email': customer.email
+            }
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+# ==================== SELLER VERIFICATION ====================
+
 @admin_bp.route('/sellers/pending', methods=['GET'])
 @jwt_required()
 def get_pending_sellers():
