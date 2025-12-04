@@ -1,4 +1,4 @@
-# models/chat_model.py - FIXED FOR USER MODEL
+# models/chat_model.py - FIXED FOR CUSTOMER/SELLER MODELS
 from app import db
 from datetime import datetime
 
@@ -6,8 +6,8 @@ class ChatRoom(db.Model):
     __tablename__ = 'chat_room'
     
     id = db.Column(db.Integer, primary_key=True)
-    customer_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)  # Updated FK
-    seller_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)    # Updated FK
+    customer_id = db.Column(db.Integer, db.ForeignKey('customer.customerId'), nullable=False)
+    seller_id = db.Column(db.Integer, db.ForeignKey('seller.sellerId'), nullable=False)
     last_message = db.Column(db.Text)
     last_message_time = db.Column(db.DateTime)
     unread_count_customer = db.Column(db.Integer, default=0)
@@ -15,9 +15,9 @@ class ChatRoom(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     is_active = db.Column(db.Boolean, default=True)
     
-    # Relationships - Updated to use User model
-    customer = db.relationship('User', foreign_keys=[customer_id], backref='customer_chat_rooms')
-    seller = db.relationship('User', foreign_keys=[seller_id], backref='seller_chat_rooms')
+    # Relationships
+    customer = db.relationship('Customer', foreign_keys=[customer_id], backref='customer_chat_rooms')
+    seller = db.relationship('Seller', foreign_keys=[seller_id], backref='seller_chat_rooms')
     messages = db.relationship('ChatMessage', backref='chat_room', lazy='dynamic', cascade='all, delete-orphan')
     
     def to_dict(self, user_type='customer'):
@@ -25,19 +25,19 @@ class ChatRoom(db.Model):
         if user_type == 'customer':
             # For customer, show seller info
             other_user = {
-                'id': self.seller.id,
-                'name': self.seller.name,  # Adjust based on your User model fields
+                'id': self.seller.sellerId,
+                'name': self.seller.storeName,
                 'type': 'seller',
-                'avatar': self.seller.name[0].upper() if self.seller.name else 'S'
+                'avatar': self.seller.storeName[0].upper() if self.seller.storeName else 'S'
             }
             unread_count = self.unread_count_customer
         else:
             # For seller, show customer info
             other_user = {
-                'id': self.customer.id,
-                'name': self.customer.name,  # Adjust based on your User model fields
+                'id': self.customer.customerId,
+                'name': self.customer.customerName,
                 'type': 'customer',
-                'avatar': self.customer.name[0].upper() if self.customer.name else 'C'
+                'avatar': self.customer.customerName[0].upper() if self.customer.customerName else 'C'
             }
             unread_count = self.unread_count_seller
         
@@ -63,10 +63,7 @@ class ChatMessage(db.Model):
     sender_id = db.Column(db.Integer, nullable=False)
     message = db.Column(db.Text, nullable=False)
     message_type = db.Column(db.String(20), default='text')  # 'text', 'image', 'product'
-    
-    # FIXED: Renamed from 'metadata' to 'message_data' to avoid SQLAlchemy reserved word
     message_data = db.Column(db.JSON)  # For storing additional info (product links, image URLs, etc.)
-    
     is_read = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
@@ -78,7 +75,7 @@ class ChatMessage(db.Model):
             'sender_id': self.sender_id,
             'message': self.message,
             'message_type': self.message_type,
-            'message_data': self.message_data,  # Updated field name
+            'message_data': self.message_data,
             'is_read': self.is_read,
             'created_at': self.created_at.isoformat(),
             'timestamp': self.created_at.strftime('%I:%M %p')

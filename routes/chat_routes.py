@@ -1,9 +1,9 @@
-# routes/chat_routes.py - FIXED FOR USER MODEL
+# routes/chat_routes.py - FIXED FOR CUSTOMER/SELLER MODELS
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app import db
 from models.chat_model import ChatRoom, ChatMessage
-from models.user import User  # Updated import
+from models.user import Customer, Seller  # Updated import
 from datetime import datetime
 from sqlalchemy import or_, and_
 
@@ -48,8 +48,8 @@ def create_or_get_chat_room(other_user_id):
             customer_id = user_id
             seller_id = other_user_id
             
-            # Verify seller exists and is a seller
-            seller = User.query.filter_by(id=seller_id, role='seller').first()
+            # Verify seller exists
+            seller = Seller.query.filter_by(sellerId=seller_id).first()
             if not seller:
                 return jsonify({'error': 'Seller not found'}), 404
                 
@@ -58,8 +58,8 @@ def create_or_get_chat_room(other_user_id):
             seller_id = user_id
             customer_id = other_user_id
             
-            # Verify customer exists and is a customer
-            customer = User.query.filter_by(id=customer_id, role='customer').first()
+            # Verify customer exists
+            customer = Customer.query.filter_by(customerId=customer_id).first()
             if not customer:
                 return jsonify({'error': 'Customer not found'}), 404
         else:
