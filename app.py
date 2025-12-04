@@ -76,6 +76,7 @@ def create_app():
     from routes.order_routes import order_bp
     from routes.cart_route import cart_bp
     from routes.cartitem_route import cartitem_bp
+    from routes.chat_routes import chat_bp  # NEW: Import chat blueprint
     
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(customer_bp, url_prefix='/api/customer')
@@ -85,6 +86,7 @@ def create_app():
     app.register_blueprint(order_bp, url_prefix='/api/orders')
     app.register_blueprint(cart_bp)
     app.register_blueprint(cartitem_bp)
+    app.register_blueprint(chat_bp)  # NEW: Register chat blueprint
     
     # Create tables
     with app.app_context():
@@ -100,7 +102,8 @@ def create_app():
             'message': '67 Street Food Ordering Management System API', 
             'status': 'running',
             'database': 'Railway MySQL',
-            'cloudinary': 'configured'
+            'cloudinary': 'configured',
+            'features': ['auth', 'products', 'orders', 'cart', 'chat']
         }
     
     @app.route('/api/health')
