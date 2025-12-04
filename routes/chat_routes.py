@@ -1,13 +1,34 @@
-# routes/chat_routes.py - FIXED FOR CUSTOMER/SELLER MODELS
+# routes/chat_routes.py - FIXED TO MATCH AUTH JWT FORMAT
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app import db
 from models.chat_model import ChatRoom, ChatMessage
-from models.user import Customer, Seller  # Updated import
+from models.user import Customer, Seller
 from datetime import datetime
 from sqlalchemy import or_, and_
 
 chat_bp = Blueprint('chat', __name__, url_prefix='/api/chat')
+
+
+def get_current_user_info():
+    """Helper function to extract user info from JWT identity string"""
+    try:
+        identity = get_jwt_identity()
+        
+        # Identity format is "customer:123" or "seller:456"
+        if ':' not in identity:
+            return None, None, "Invalid token format"
+        
+        user_type, user_id = identity.split(':')
+        user_id = int(user_id)
+        
+        if user_type not in ['customer', 'seller']:
+            return None, None, "Invalid user type"
+            
+        return user_id, user_type, None
+        
+    except Exception as e:
+        return None, None, str(e)
 
 
 @chat_bp.route('/rooms', methods=['GET'])
@@ -15,9 +36,9 @@ chat_bp = Blueprint('chat', __name__, url_prefix='/api/chat')
 def get_chat_rooms():
     """Get all chat rooms for the current user"""
     try:
-        current_user = get_jwt_identity()
-        user_id = current_user['id']
-        user_type = current_user['role']
+        user_id, user_type, error = get_current_user_info()
+        if error:
+            return jsonify({'error': f'Authentication error: {error}'}), 401
         
         if user_type == 'customer':
             rooms = ChatRoom.query.filter_by(customer_id=user_id, is_active=True).order_by(ChatRoom.last_message_time.desc()).all()
@@ -31,7 +52,7 @@ def get_chat_rooms():
         }), 200
         
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': f'Server error: {str(e)}'}), 500
 
 
 @chat_bp.route('/room/<int:other_user_id>', methods=['POST'])
@@ -39,9 +60,9 @@ def get_chat_rooms():
 def create_or_get_chat_room(other_user_id):
     """Create a new chat room or get existing one"""
     try:
-        current_user = get_jwt_identity()
-        user_id = current_user['id']
-        user_type = current_user['role']
+        user_id, user_type, error = get_current_user_info()
+        if error:
+            return jsonify({'error': f'Authentication error: {error}'}), 401
         
         if user_type == 'customer':
             # Customer chatting with seller
@@ -87,7 +108,7 @@ def create_or_get_chat_room(other_user_id):
         
     except Exception as e:
         db.session.rollback()
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': f'Server error: {str(e)}'}), 500
 
 
 @chat_bp.route('/room/<int:room_id>/messages', methods=['GET'])
@@ -95,9 +116,9 @@ def create_or_get_chat_room(other_user_id):
 def get_messages(room_id):
     """Get all messages in a chat room"""
     try:
-        current_user = get_jwt_identity()
-        user_id = current_user['id']
-        user_type = current_user['role']
+        user_id, user_type, error = get_current_user_info()
+        if error:
+            return jsonify({'error': f'Authentication error: {error}'}), 401
         
         # Verify user has access to this chat room
         chat_room = ChatRoom.query.get(room_id)
@@ -149,7 +170,7 @@ def get_messages(room_id):
         
     except Exception as e:
         db.session.rollback()
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': f'Server error: {str(e)}'}), 500
 
 
 @chat_bp.route('/room/<int:room_id>/message', methods=['POST'])
@@ -157,9 +178,9 @@ def get_messages(room_id):
 def send_message(room_id):
     """Send a message in a chat room"""
     try:
-        current_user = get_jwt_identity()
-        user_id = current_user['id']
-        user_type = current_user['role']
+        user_id, user_type, error = get_current_user_info()
+        if error:
+            return jsonify({'error': f'Authentication error: {error}'}), 401
         
         data = request.get_json()
         message_text = data.get('message', '').strip()
@@ -209,7 +230,7 @@ def send_message(room_id):
         
     except Exception as e:
         db.session.rollback()
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': f'Server error: {str(e)}'}), 500
 
 
 @chat_bp.route('/room/<int:room_id>/mark-read', methods=['PUT'])
@@ -217,9 +238,9 @@ def send_message(room_id):
 def mark_messages_read(room_id):
     """Mark all messages in a chat room as read"""
     try:
-        current_user = get_jwt_identity()
-        user_id = current_user['id']
-        user_type = current_user['role']
+        user_id, user_type, error = get_current_user_info()
+        if error:
+            return jsonify({'error': f'Authentication error: {error}'}), 401
         
         chat_room = ChatRoom.query.get(room_id)
         if not chat_room:
@@ -252,7 +273,7 @@ def mark_messages_read(room_id):
         
     except Exception as e:
         db.session.rollback()
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': f'Server error: {str(e)}'}), 500
 
 
 @chat_bp.route('/unread-count', methods=['GET'])
@@ -260,9 +281,9 @@ def mark_messages_read(room_id):
 def get_unread_count():
     """Get total unread message count for current user"""
     try:
-        current_user = get_jwt_identity()
-        user_id = current_user['id']
-        user_type = current_user['role']
+        user_id, user_type, error = get_current_user_info()
+        if error:
+            return jsonify({'error': f'Authentication error: {error}'}), 401
         
         if user_type == 'customer':
             total_unread = db.session.query(db.func.sum(ChatRoom.unread_count_customer)).filter_by(
@@ -282,7 +303,7 @@ def get_unread_count():
         }), 200
         
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': f'Server error: {str(e)}'}), 500
 
 
 @chat_bp.route('/room/<int:room_id>', methods=['DELETE'])
@@ -290,9 +311,9 @@ def get_unread_count():
 def delete_chat_room(room_id):
     """Soft delete a chat room"""
     try:
-        current_user = get_jwt_identity()
-        user_id = current_user['id']
-        user_type = current_user['role']
+        user_id, user_type, error = get_current_user_info()
+        if error:
+            return jsonify({'error': f'Authentication error: {error}'}), 401
         
         chat_room = ChatRoom.query.get(room_id)
         if not chat_room:
@@ -310,4 +331,4 @@ def delete_chat_room(room_id):
         
     except Exception as e:
         db.session.rollback()
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': f'Server error: {str(e)}'}), 500
