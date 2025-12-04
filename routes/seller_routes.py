@@ -10,6 +10,7 @@ import cloudinary
 import cloudinary.uploader
 from werkzeug.utils import secure_filename
 import os
+from sqlalchemy import func, text
 
 seller_bp = Blueprint('seller', __name__)
 
@@ -612,6 +613,10 @@ def get_analytics():
 
 
 # Add this to your seller_routes.py file
+# Add this import at the top of your seller_routes.py file
+from sqlalchemy import func, text  # Add 'text' here
+
+# Replace your reservation endpoints with these fixed versions:
 
 @seller_bp.route('/reservations', methods=['GET'])
 @jwt_required()
@@ -625,8 +630,8 @@ def get_seller_reservations():
         
         status = request.args.get('status')
         
-        # Direct SQL query to join reservation and customer tables
-        query = """
+        # Use text() to wrap SQL query
+        query = text("""
             SELECT 
                 r.reservationId,
                 r.customerId,
@@ -642,16 +647,15 @@ def get_seller_reservations():
                 c.address
             FROM reservation r
             LEFT JOIN customer c ON r.customerId = c.customerId
-        """
+        """ + (" WHERE r.status = :status" if status else "") + """
+            ORDER BY r.reservationDate DESC
+        """)
         
-        # Add status filter if provided
+        # Execute with parameters if status filter exists
         if status:
-            query += f" WHERE r.status = '{status}'"
-        
-        query += " ORDER BY r.reservationDate DESC"
-        
-        # Execute the query
-        result = db.session.execute(query)
+            result = db.session.execute(query, {'status': status})
+        else:
+            result = db.session.execute(query)
         
         # Convert results to list of dictionaries
         reservations = []
@@ -691,7 +695,7 @@ def get_reservation_details(reservation_id):
         if not seller:
             return jsonify({'error': 'Seller profile not found'}), 404
         
-        query = """
+        query = text("""
             SELECT 
                 r.reservationId,
                 r.customerId,
@@ -708,7 +712,7 @@ def get_reservation_details(reservation_id):
             FROM reservation r
             LEFT JOIN customer c ON r.customerId = c.customerId
             WHERE r.reservationId = :reservation_id
-        """
+        """)
         
         result = db.session.execute(query, {'reservation_id': reservation_id}).fetchone()
         
@@ -756,12 +760,12 @@ def update_reservation_status(reservation_id):
         if new_status not in valid_statuses:
             return jsonify({'error': 'Invalid status'}), 400
         
-        # Update reservation status
-        update_query = """
+        # Update reservation status using text()
+        update_query = text("""
             UPDATE reservation 
             SET status = :status, updatedAt = :updated_at 
             WHERE reservationId = :reservation_id
-        """
+        """)
         
         db.session.execute(
             update_query, 
@@ -773,8 +777,8 @@ def update_reservation_status(reservation_id):
         )
         db.session.commit()
         
-        # Fetch updated reservation with customer info
-        query = """
+        # Fetch updated reservation with customer info using text()
+        query = text("""
             SELECT 
                 r.reservationId,
                 r.customerId,
@@ -788,7 +792,7 @@ def update_reservation_status(reservation_id):
             FROM reservation r
             LEFT JOIN customer c ON r.customerId = c.customerId
             WHERE r.reservationId = :reservation_id
-        """
+        """)
         
         result = db.session.execute(query, {'reservation_id': reservation_id}).fetchone()
         
