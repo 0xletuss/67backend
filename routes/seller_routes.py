@@ -309,43 +309,108 @@ def delete_product(product_id):
 def update_inventory(product_id):
     try:
         seller = get_current_seller()
-        
         if not seller:
             return jsonify({'error': 'Seller profile not found'}), 404
         
-        product = Product.query.filter_by(productId=product_id, sellerId=seller.sellerId).first()
+        # Get product with explicit query
+        product = Product.query.filter_by(
+            productId=product_id, 
+            sellerId=seller.sellerId
+        ).first()
+        
         if not product:
             return jsonify({'error': 'Product not found'}), 404
         
         data = request.get_json()
-        quantity_change = data.get('quantity_change', 0)
+        quantity_change = data.get('quantity_change')
         
-        # Update inventory
-        if product.inventory:
-            product.inventory.quantityInStock += quantity_change
+        print(f"\n{'='*50}")
+        print(f"INVENTORY UPDATE REQUEST")
+        print(f"{'='*50}")
+        print(f"Product ID: {product_id}")
+        print(f"Product Name: {product.productName}")
+        print(f"Seller ID: {seller.sellerId}")
+        print(f"Request Data: {data}")
+        print(f"Quantity Change: {quantity_change} (type: {type(quantity_change)})")
+        
+        if quantity_change is None:
+            return jsonify({'error': 'quantity_change is required'}), 400
+        
+        quantity_change = int(quantity_change)
+        
+        if quantity_change == 0:
+            return jsonify({'error': 'Quantity change cannot be zero'}), 400
+        
+        # Check if inventory exists
+        inventory = Inventory.query.filter_by(productId=product_id).first()
+        
+        if inventory:
+            print(f"Found existing inventory: ID={inventory.inventoryId}")
+            print(f"Current stock BEFORE: {inventory.quantityInStock}")
+            
+            # Update stock
+            old_stock = inventory.quantityInStock
+            inventory.quantityInStock = inventory.quantityInStock + quantity_change
+            
+            # Don't allow negative stock
+            if inventory.quantityInStock < 0:
+                inventory.quantityInStock = 0
+            
             if quantity_change > 0:
-                product.inventory.lastRestocked = datetime.utcnow()
-            product.inventory.updatedAt = datetime.utcnow()
+                inventory.lastRestocked = datetime.utcnow()
+            
+            inventory.updatedAt = datetime.utcnow()
+            
+            print(f"New stock AFTER calculation: {inventory.quantityInStock}")
+            print(f"Change: {old_stock} -> {inventory.quantityInStock}")
         else:
+            print(f"No inventory found, creating new record")
+            initial_stock = max(0, quantity_change)
+            
             inventory = Inventory(
                 productId=product_id,
-                quantityInStock=max(0, quantity_change),
-                lastRestocked=datetime.utcnow()
+                quantityInStock=initial_stock,
+                reorderLevel=10,
+                lastRestocked=datetime.utcnow() if quantity_change > 0 else None,
+                updatedAt=datetime.utcnow()
             )
+            
             db.session.add(inventory)
+            print(f"Created new inventory with stock: {initial_stock}")
         
+        # Commit to database
+        print(f"Committing to database...")
         db.session.commit()
+        print(f"✅ Commit successful!")
+        
+        # Verify the update
+        db.session.refresh(inventory)
+        final_stock = inventory.quantityInStock
+        
+        print(f"Final stock after refresh: {final_stock}")
+        print(f"{'='*50}\n")
+        
+        # Get fresh product data
+        product = Product.query.get(product_id)
         
         return jsonify({
             'message': 'Inventory updated successfully',
-            'product': product.to_dict()
+            'product': product.to_dict(),
+            'newStock': final_stock,
+            'inventoryId': inventory.inventoryId
         }), 200
         
+    except ValueError as ve:
+        print(f"❌ ValueError: {ve}")
+        return jsonify({'error': 'Invalid quantity value'}), 400
     except Exception as e:
         db.session.rollback()
-        print(f"Error in update_inventory: {e}")
+        print(f"❌ Error in update_inventory: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
-
+    
+    
 @seller_bp.route('/inventory/logs', methods=['GET'])
 @jwt_required()
 def get_inventory_logs():
