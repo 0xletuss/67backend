@@ -609,3 +609,209 @@ def get_analytics():
     except Exception as e:
         print(f"Error in get_analytics: {e}")
         return jsonify({'error': str(e)}), 500
+
+
+# Add this to your seller_routes.py file
+
+@seller_bp.route('/reservations', methods=['GET'])
+@jwt_required()
+def get_seller_reservations():
+    """Get all reservations with customer information using direct SQL"""
+    try:
+        seller = get_current_seller()
+        
+        if not seller:
+            return jsonify({'error': 'Seller profile not found'}), 404
+        
+        status = request.args.get('status')
+        
+        # Direct SQL query to join reservation and customer tables
+        query = """
+            SELECT 
+                r.reservationId,
+                r.customerId,
+                r.reservationDate,
+                r.numberOfPeople,
+                r.status,
+                r.specialRequests,
+                r.createdAt,
+                r.updatedAt,
+                c.customerName,
+                c.email,
+                c.phoneNumber,
+                c.address
+            FROM reservation r
+            LEFT JOIN customer c ON r.customerId = c.customerId
+        """
+        
+        # Add status filter if provided
+        if status:
+            query += f" WHERE r.status = '{status}'"
+        
+        query += " ORDER BY r.reservationDate DESC"
+        
+        # Execute the query
+        result = db.session.execute(query)
+        
+        # Convert results to list of dictionaries
+        reservations = []
+        for row in result:
+            reservation = {
+                'reservationId': row.reservationId,
+                'customerId': row.customerId,
+                'customerName': row.customerName or 'Unknown Customer',
+                'email': row.email,
+                'phoneNumber': row.phoneNumber,
+                'address': row.address,
+                'reservationDate': row.reservationDate.isoformat() if row.reservationDate else None,
+                'numberOfPeople': row.numberOfPeople,
+                'status': row.status,
+                'specialRequests': row.specialRequests,
+                'createdAt': row.createdAt.isoformat() if row.createdAt else None,
+                'updatedAt': row.updatedAt.isoformat() if row.updatedAt else None
+            }
+            reservations.append(reservation)
+        
+        return jsonify({'reservations': reservations}), 200
+        
+    except Exception as e:
+        print(f"Error in get_seller_reservations: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@seller_bp.route('/reservations/<int:reservation_id>', methods=['GET'])
+@jwt_required()
+def get_reservation_details(reservation_id):
+    """Get single reservation details with customer info"""
+    try:
+        seller = get_current_seller()
+        
+        if not seller:
+            return jsonify({'error': 'Seller profile not found'}), 404
+        
+        query = """
+            SELECT 
+                r.reservationId,
+                r.customerId,
+                r.reservationDate,
+                r.numberOfPeople,
+                r.status,
+                r.specialRequests,
+                r.createdAt,
+                r.updatedAt,
+                c.customerName,
+                c.email,
+                c.phoneNumber,
+                c.address
+            FROM reservation r
+            LEFT JOIN customer c ON r.customerId = c.customerId
+            WHERE r.reservationId = :reservation_id
+        """
+        
+        result = db.session.execute(query, {'reservation_id': reservation_id}).fetchone()
+        
+        if not result:
+            return jsonify({'error': 'Reservation not found'}), 404
+        
+        reservation = {
+            'reservationId': result.reservationId,
+            'customerId': result.customerId,
+            'customerName': result.customerName or 'Unknown Customer',
+            'email': result.email,
+            'phoneNumber': result.phoneNumber,
+            'address': result.address,
+            'reservationDate': result.reservationDate.isoformat() if result.reservationDate else None,
+            'numberOfPeople': result.numberOfPeople,
+            'status': result.status,
+            'specialRequests': result.specialRequests,
+            'createdAt': result.createdAt.isoformat() if result.createdAt else None,
+            'updatedAt': result.updatedAt.isoformat() if result.updatedAt else None
+        }
+        
+        return jsonify({'reservation': reservation}), 200
+        
+    except Exception as e:
+        print(f"Error in get_reservation_details: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@seller_bp.route('/reservations/<int:reservation_id>/status', methods=['PUT'])
+@jwt_required()
+def update_reservation_status(reservation_id):
+    """Update reservation status"""
+    try:
+        seller = get_current_seller()
+        
+        if not seller:
+            return jsonify({'error': 'Seller profile not found'}), 404
+        
+        data = request.get_json()
+        new_status = data.get('status')
+        
+        valid_statuses = ['Confirmed', 'Cancelled', 'Pending']
+        if new_status not in valid_statuses:
+            return jsonify({'error': 'Invalid status'}), 400
+        
+        # Update reservation status
+        update_query = """
+            UPDATE reservation 
+            SET status = :status, updatedAt = :updated_at 
+            WHERE reservationId = :reservation_id
+        """
+        
+        db.session.execute(
+            update_query, 
+            {
+                'status': new_status, 
+                'updated_at': datetime.utcnow(),
+                'reservation_id': reservation_id
+            }
+        )
+        db.session.commit()
+        
+        # Fetch updated reservation with customer info
+        query = """
+            SELECT 
+                r.reservationId,
+                r.customerId,
+                r.reservationDate,
+                r.numberOfPeople,
+                r.status,
+                r.specialRequests,
+                r.createdAt,
+                c.customerName,
+                c.email
+            FROM reservation r
+            LEFT JOIN customer c ON r.customerId = c.customerId
+            WHERE r.reservationId = :reservation_id
+        """
+        
+        result = db.session.execute(query, {'reservation_id': reservation_id}).fetchone()
+        
+        reservation = {
+            'reservationId': result.reservationId,
+            'customerId': result.customerId,
+            'customerName': result.customerName or 'Unknown Customer',
+            'email': result.email,
+            'reservationDate': result.reservationDate.isoformat() if result.reservationDate else None,
+            'numberOfPeople': result.numberOfPeople,
+            'status': result.status,
+            'specialRequests': result.specialRequests,
+            'createdAt': result.createdAt.isoformat() if result.createdAt else None
+        }
+        
+        return jsonify({
+            'message': 'Reservation status updated successfully',
+            'reservation': reservation
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        print(f"Error in update_reservation_status: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
