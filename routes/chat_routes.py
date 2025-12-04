@@ -1,10 +1,9 @@
-# routes/chat_routes.py - FIXED VERSION
+# routes/chat_routes.py - FIXED FOR USER MODEL
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app import db
 from models.chat_model import ChatRoom, ChatMessage
-from models.customer import Customer
-from models.seller import Seller
+from models.user import User  # Updated import
 from datetime import datetime
 from sqlalchemy import or_, and_
 
@@ -49,8 +48,8 @@ def create_or_get_chat_room(other_user_id):
             customer_id = user_id
             seller_id = other_user_id
             
-            # Verify seller exists
-            seller = Seller.query.get(seller_id)
+            # Verify seller exists and is a seller
+            seller = User.query.filter_by(id=seller_id, role='seller').first()
             if not seller:
                 return jsonify({'error': 'Seller not found'}), 404
                 
@@ -59,8 +58,8 @@ def create_or_get_chat_room(other_user_id):
             seller_id = user_id
             customer_id = other_user_id
             
-            # Verify customer exists
-            customer = Customer.query.get(customer_id)
+            # Verify customer exists and is a customer
+            customer = User.query.filter_by(id=customer_id, role='customer').first()
             if not customer:
                 return jsonify({'error': 'Customer not found'}), 404
         else:
@@ -165,7 +164,7 @@ def send_message(room_id):
         data = request.get_json()
         message_text = data.get('message', '').strip()
         message_type = data.get('message_type', 'text')
-        message_data = data.get('message_data')  # FIXED: Changed from 'metadata'
+        message_data = data.get('message_data')
         
         if not message_text:
             return jsonify({'error': 'Message cannot be empty'}), 400
@@ -187,11 +186,11 @@ def send_message(room_id):
             sender_id=user_id,
             message=message_text,
             message_type=message_type,
-            message_data=message_data  # FIXED: Changed from 'metadata'
+            message_data=message_data
         )
         
         # Update chat room last message
-        chat_room.last_message = message_text[:100]  # Store first 100 chars
+        chat_room.last_message = message_text[:100]
         chat_room.last_message_time = datetime.utcnow()
         
         # Increment unread count for the receiver

@@ -1,4 +1,4 @@
-# models/chat_model.py - FIXED VERSION
+# models/chat_model.py - FIXED FOR USER MODEL
 from app import db
 from datetime import datetime
 
@@ -6,8 +6,8 @@ class ChatRoom(db.Model):
     __tablename__ = 'chat_room'
     
     id = db.Column(db.Integer, primary_key=True)
-    customer_id = db.Column(db.Integer, db.ForeignKey('customer.customerId'), nullable=False)
-    seller_id = db.Column(db.Integer, db.ForeignKey('seller.sellerId'), nullable=False)
+    customer_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)  # Updated FK
+    seller_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)    # Updated FK
     last_message = db.Column(db.Text)
     last_message_time = db.Column(db.DateTime)
     unread_count_customer = db.Column(db.Integer, default=0)
@@ -15,27 +15,29 @@ class ChatRoom(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     is_active = db.Column(db.Boolean, default=True)
     
-    # Relationships
-    customer = db.relationship('Customer', foreign_keys=[customer_id], backref='chat_rooms')
-    seller = db.relationship('Seller', foreign_keys=[seller_id], backref='chat_rooms')
+    # Relationships - Updated to use User model
+    customer = db.relationship('User', foreign_keys=[customer_id], backref='customer_chat_rooms')
+    seller = db.relationship('User', foreign_keys=[seller_id], backref='seller_chat_rooms')
     messages = db.relationship('ChatMessage', backref='chat_room', lazy='dynamic', cascade='all, delete-orphan')
     
     def to_dict(self, user_type='customer'):
         """Convert chat room to dictionary with user-specific info"""
         if user_type == 'customer':
+            # For customer, show seller info
             other_user = {
-                'id': self.seller.sellerId,
-                'name': self.seller.storeName,
+                'id': self.seller.id,
+                'name': self.seller.name,  # Adjust based on your User model fields
                 'type': 'seller',
-                'avatar': self.seller.storeName[0].upper() if self.seller.storeName else 'S'
+                'avatar': self.seller.name[0].upper() if self.seller.name else 'S'
             }
             unread_count = self.unread_count_customer
         else:
+            # For seller, show customer info
             other_user = {
-                'id': self.customer.customerId,
-                'name': self.customer.customerName,
+                'id': self.customer.id,
+                'name': self.customer.name,  # Adjust based on your User model fields
                 'type': 'customer',
-                'avatar': self.customer.customerName[0].upper() if self.customer.customerName else 'C'
+                'avatar': self.customer.name[0].upper() if self.customer.name else 'C'
             }
             unread_count = self.unread_count_seller
         
