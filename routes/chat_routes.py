@@ -1,3 +1,4 @@
+# routes/chat_routes.py - FIXED VERSION
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app import db
@@ -164,7 +165,7 @@ def send_message(room_id):
         data = request.get_json()
         message_text = data.get('message', '').strip()
         message_type = data.get('message_type', 'text')
-        metadata = data.get('metadata')
+        message_data = data.get('message_data')  # FIXED: Changed from 'metadata'
         
         if not message_text:
             return jsonify({'error': 'Message cannot be empty'}), 400
@@ -186,7 +187,7 @@ def send_message(room_id):
             sender_id=user_id,
             message=message_text,
             message_type=message_type,
-            metadata=metadata
+            message_data=message_data  # FIXED: Changed from 'metadata'
         )
         
         # Update chat room last message

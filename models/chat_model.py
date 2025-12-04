@@ -1,3 +1,4 @@
+# models/chat_model.py - FIXED VERSION
 from app import db
 from datetime import datetime
 
@@ -60,7 +61,10 @@ class ChatMessage(db.Model):
     sender_id = db.Column(db.Integer, nullable=False)
     message = db.Column(db.Text, nullable=False)
     message_type = db.Column(db.String(20), default='text')  # 'text', 'image', 'product'
-    metadata = db.Column(db.JSON)  # For storing additional info (product links, image URLs, etc.)
+    
+    # FIXED: Renamed from 'metadata' to 'message_data' to avoid SQLAlchemy reserved word
+    message_data = db.Column(db.JSON)  # For storing additional info (product links, image URLs, etc.)
+    
     is_read = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
@@ -72,7 +76,7 @@ class ChatMessage(db.Model):
             'sender_id': self.sender_id,
             'message': self.message,
             'message_type': self.message_type,
-            'metadata': self.metadata,
+            'message_data': self.message_data,  # Updated field name
             'is_read': self.is_read,
             'created_at': self.created_at.isoformat(),
             'timestamp': self.created_at.strftime('%I:%M %p')
